@@ -59,18 +59,8 @@ export const Dashboard: React.FC = () => {
       <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
         {/* 左側三步操作區 */}
         <div style={{ flex: '1 1 500px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* 第一步 */}
-          <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0 0 12px 0' }}>第一步：建立備考計畫大項</h3>
-            <form onSubmit={handleCreatePlan} style={{ display: 'flex', gap: '12px' }}>
-              <input type="text" value={planName} onChange={e => setPlanName(e.target.value)} placeholder="例如：115年食品檢驗分析高考" style={{ flex: 1, padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px' }} />
-              <input type="color" value={planColor} onChange={e => setPlanColor(e.target.value)} style={{ width: '40px', height: '40px', border: 'none', cursor: 'pointer', padding: 0 }} />
-              <button type="submit" style={{ backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>建立計畫</button>
-            </form>
-          </div>
 
-          {/* 第二步 */}
+          {/* 第一步 */}
           <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
             <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0 0 12px 0' }}>第二步：新增該計畫對應的教材 / 書籍</h3>
             <form onSubmit={handleAddBook} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -108,7 +98,7 @@ export const Dashboard: React.FC = () => {
             </form>
           </div>
 
-          {/* 第三步 */}
+          {/* 第二步 */}
           <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
             <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0 0 12px 0' }}>第三步：回報今日啃完的實體分量</h3>
             <form onSubmit={handleReport} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -125,6 +115,16 @@ export const Dashboard: React.FC = () => {
                   </select>
                 </div>
               </div>
+
+          {/* 第三步 */}
+          <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0 0 12px 0' }}>第一步：建立備考計畫大項</h3>
+            <form onSubmit={handleCreatePlan} style={{ display: 'flex', gap: '12px' }}>
+              <input type="text" value={planName} onChange={e => setPlanName(e.target.value)} placeholder="例如：115年食品檢驗分析高考" style={{ flex: 1, padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px' }} />
+              <input type="color" value={planColor} onChange={e => setPlanColor(e.target.value)} style={{ width: '40px', height: '40px', border: 'none', cursor: 'pointer', padding: 0 }} />
+              <button type="submit" style={{ backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>建立計畫</button>
+            </form>
+          </div>
 
               {reportPlanId && currentSelectedPlan && (
                 <div>
