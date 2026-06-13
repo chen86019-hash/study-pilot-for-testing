@@ -11,7 +11,7 @@
 	"scripts": {
 		"start": "pnpm run dev",
 		"dev": "vite",
-		"build": "tsc && vite build",
+		"build": "npm install && vite build",
 		"preview": "vite preview",
 		"eslint": "eslint --fix --max-warnings=0",
 		"prettier": "prettier --write src/**/*.{ts,tsx,less}",
