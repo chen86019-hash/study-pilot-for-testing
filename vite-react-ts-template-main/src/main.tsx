@@ -1,9 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 
-// ==========================================
-// 1. 資料結構與參數定義
-// ==========================================
 type IntensityMode = 'easy' | 'normal' | 'sprint';
 
 interface Book {
@@ -12,8 +9,9 @@ interface Book {
   unitType: 'pages' | 'chapters'; 
   totalUnits: number;
   completedUnits: number; 
+  startDate: string;       
   deadline: string;        
-  targetRounds: number; 
+  targetRounds: number;    
 }
 
 interface StudyPlan {
@@ -27,15 +25,39 @@ interface StudyPlan {
 interface DailyLog {
   id: string;
   date: string; 
+  bookId: string;       
   bookTitle: string;
   unitType: 'pages' | 'chapters';
   units: number;
 }
 
+interface StrategyCLog {
+  bookId: string;
+  sourceDate: string;  
+  targetDate: string;  
+  units: number;       
+}
+
+interface UndoSnapshot {
+  strategyCLogs: StrategyCLog[];
+  timestamp: number;
+}
+
+// 🛡️ [修復] 加入安全讀取工具，防止 JSON 解析崩潰
+const safeLoad = (key: string, defaultValue: any) => {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : defaultValue;
+  } catch (e) {
+    console.error(`Load error for ${key}`, e);
+    return defaultValue;
+  }
+};
+
 const INTENSITY_CEILINGS = {
   easy: { pages: 12, chapters: 1 },
   normal: { pages: 25, chapters: 2 },
-  sprint: { pages: 45, chapters: 3 }
+  sprint: { pages: 999, chapters: 99 } 
 };
 
 const formatDateStr = (date: Date) => {
@@ -46,26 +68,20 @@ const formatDateStr = (date: Date) => {
 };
 
 function App() {
-  // ==========================================
-  // 2. 狀態管理
-  // ==========================================
+  // 🛡️ [修復] 使用 safeLoad 確保初始化不崩潰
   const [intensity, setIntensity] = useState<IntensityMode>(() => {
-    return (localStorage.getItem('pilot_intensity_v22') as IntensityMode) || 'normal';
+    return (localStorage.getItem('pilot_intensity_v7') as IntensityMode) || 'normal';
   });
 
-  const [plans, setPlans] = useState<StudyPlan[]>(() => {
-    const saved = localStorage.getItem('pilot_plans_v22');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => {
-    const saved = localStorage.getItem('pilot_logs_v22');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [weeklyRestDays, setWeeklyRestDays] = useState<number[]>(() => {
-    const saved = localStorage.getItem('pilot_rest_v22');
-    return saved ? JSON.parse(saved) : [0, 6]; 
+  const [plans, setPlans] = useState<StudyPlan[]>(() => safeLoad('pilot_plans_v7', []));
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => safeLoad('pilot_logs_v7', []));
+  const [weeklyRestDays, setWeeklyRestDays] = useState<number[]>(() => safeLoad('pilot_rest_v7', [0, 6]));
+  const [checkedTasks, setCheckedTasks] = useState<{ [key: string]: boolean }>(() => safeLoad('pilot_checked_tasks_v7', {}));
+  const [strategyCLogs, setStrategyCLogs] = useState<StrategyCLog[]>(() => safeLoad('pilot_strategy_c_v7', []));
+  const [undoSnapshot, setUndoSnapshot] = useState<UndoSnapshot | null>(() => safeLoad('pilot_undo_snapshot_v7', null));
+  
+  const [showUndoBar, setShowUndoBar] = useState<boolean>(() => {
+    return localStorage.getItem('pilot_show_undobar_v7') === 'true';
   });
 
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
@@ -73,9 +89,7 @@ function App() {
   const [currentMonth, setCurrentMonth] = useState<number>(() => new Date().getMonth());
   const [activeDialog, setActiveDialog] = useState<any | null>(null);
   const [reportDateStr, setReportDateStr] = useState<string>(formatDateStr(new Date()));
-  const [showGuide, setShowGuide] = useState<boolean>(true);
 
-  // 表單狀態
   const [newPlanName, setNewPlanName] = useState('');
   const [newPlanDeadline, setNewPlanDeadline] = useState('');
   const [selectedPlanId, setSelectedPlanId] = useState('');
@@ -83,11 +97,13 @@ function App() {
   const [newBookUnitType, setNewBookUnitType] = useState<'pages' | 'chapters'>('pages');
   const [newBookTotal, setNewBookTotal] = useState<number | ''>('');
   const [newBookDeadline, setNewBookDeadline] = useState(''); 
-  const [newBookRounds, setNewBookRounds] = useState<number>(1); 
+  const [newBookRounds, setNewBookRounds] = useState<number | ''>(1); 
+  
   const [reportBookId, setReportBookId] = useState('');
   const [reportUnits, setReportUnits] = useState<number | ''>('');
 
   const [dateOptions, setDateOptions] = useState<string[]>([]);
+  
   useEffect(() => {
     const options = [];
     for (let i = 0; i < 7; i++) {
@@ -105,15 +121,29 @@ function App() {
   }, [selectedPlanId, plans]);
 
   useEffect(() => {
-    localStorage.setItem('pilot_intensity_v22', intensity);
-    localStorage.setItem('pilot_plans_v22', JSON.stringify(plans));
-    localStorage.setItem('pilot_logs_v22', JSON.stringify(dailyLogs));
-    localStorage.setItem('pilot_rest_v22', JSON.stringify(weeklyRestDays));
-  }, [intensity, plans, dailyLogs, weeklyRestDays]);
+    localStorage.setItem('pilot_intensity_v7', intensity);
+    localStorage.setItem('pilot_plans_v7', JSON.stringify(plans));
+    localStorage.setItem('pilot_logs_v7', JSON.stringify(dailyLogs));
+    localStorage.setItem('pilot_rest_v7', JSON.stringify(weeklyRestDays));
+    localStorage.setItem('pilot_checked_tasks_v7', JSON.stringify(checkedTasks));
+    localStorage.setItem('pilot_strategy_c_v7', JSON.stringify(strategyCLogs));
+    localStorage.setItem('pilot_undo_snapshot_v7', JSON.stringify(undoSnapshot));
+    localStorage.setItem('pilot_show_undobar_v7', String(showUndoBar));
+  }, [intensity, plans, dailyLogs, weeklyRestDays, checkedTasks, strategyCLogs, undoSnapshot, showUndoBar]);
+
+  useEffect(() => {
+    if (showUndoBar) {
+      const timer = setTimeout(() => {
+        setShowUndoBar(false);
+        setUndoSnapshot(null);
+      }, 8000); 
+      return () => clearTimeout(timer);
+    }
+  }, [showUndoBar]);
 
   const toggleRestDay = (day: number) => {
     if (weeklyRestDays.length === 6 && !weeklyRestDays.includes(day)) {
-      alert('⚠️ 不能把七天全部勾選為休息日！至少要留一天開航念書。');
+      alert('⚠️ 不能把七天全設為休息日，至少要留一天備考開航！');
       return;
     }
     let updated = weeklyRestDays.includes(day)
@@ -122,131 +152,317 @@ function App() {
     setWeeklyRestDays(updated);
   };
 
-  const getRemainingWorkDays = (startDate: Date, endDate: Date) => {
+  const toggleTaskCheck = (dateStr: string, bookId: string) => {
+    const key = `${dateStr}_${bookId}`;
+    setCheckedTasks(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleGoToToday = () => {
+    const today = new Date();
+    setCurrentYear(today.getFullYear());
+    setCurrentMonth(today.getMonth());
+    setReportDateStr(formatDateStr(today));
+  };
+
+  const getRemainingWorkDays = (startStr: string, endStr: string) => {
     let count = 0;
-    let curr = new Date(startDate); curr.setHours(0,0,0,0);
-    const end = new Date(endDate); end.setHours(0,0,0,0);
+    let curr = new Date(startStr); curr.setHours(0,0,0,0);
+    const end = new Date(endStr); end.setHours(0,0,0,0);
+    let guard = 0;
     while (curr <= end) {
+      guard++;
+      if (guard > 1000) break; 
       if (!weeklyRestDays.includes(curr.getDay())) count++;
       curr.setDate(curr.getDate() + 1);
     }
     return count;
   };
 
+  const findNextStudyDayStr = (baseDateStr: string) => {
+    let curr = new Date(baseDateStr); curr.setHours(0,0,0,0);
+    let guard = 0;
+    while (guard < 365) {
+      guard++;
+      curr.setDate(curr.getDate() + 1);
+      if (!weeklyRestDays.includes(curr.getDay())) {
+        return formatDateStr(curr);
+      }
+    }
+    const fallback = new Date(baseDateStr); fallback.setDate(fallback.getDate() + 1);
+    return formatDateStr(fallback);
+  };
+
+  const findNextRestDayStr = (baseDateStr: string) => {
+    let curr = new Date(baseDateStr); curr.setHours(0,0,0,0);
+    let guard = 0;
+    while (guard < 365) {
+      guard++;
+      curr.setDate(curr.getDate() + 1);
+      if (weeklyRestDays.includes(curr.getDay())) {
+        return formatDateStr(curr);
+      }
+    }
+    const fallback = new Date(baseDateStr); fallback.setDate(fallback.getDate() + 1);
+    return formatDateStr(fallback);
+  };
+
+  const executeStrategyC = (bookId: string, units: number, mode: 'next_study' | 'next_rest', currentDayStr: string) => {
+    const targetDate = mode === 'next_study' ? findNextStudyDayStr(currentDayStr) : findNextRestDayStr(currentDayStr);
+    
+    if (targetDate === currentDayStr) {
+      const altDate = new Date(currentDayStr); altDate.setDate(altDate.getDate() + 1);
+      const safeTarget = formatDateStr(altDate);
+      setUndoSnapshot({ strategyCLogs: [...strategyCLogs], timestamp: Date.now() });
+      setShowUndoBar(true);
+      setStrategyCLogs([...strategyCLogs, { bookId, sourceDate: currentDayStr, targetDate: safeTarget, units }]);
+      return;
+    }
+
+    setUndoSnapshot({
+      strategyCLogs: [...strategyCLogs],
+      timestamp: Date.now()
+    });
+    setShowUndoBar(true);
+    const newLog: StrategyCLog = { bookId, sourceDate: currentDayStr, targetDate, units };
+    setStrategyCLogs([...strategyCLogs, newLog]);
+  };
+
+  const triggerUndo = () => {
+    if (undoSnapshot) {
+      setStrategyCLogs(undoSnapshot.strategyCLogs);
+      setUndoSnapshot(null);
+      setShowUndoBar(false);
+      alert('↩️ 已成功回復調度！大盤進度與指針已安全復原。');
+    }
+  };
+
+  const clearStrategyCLog = (index: number) => {
+    setStrategyCLogs(prev => prev.filter((_, i) => i !== index));
+  };
+
   const getDayPlanDetails = (gridDate: Date) => {
     const target = new Date(gridDate); target.setHours(0, 0, 0, 0);
     const dateStr = formatDateStr(target);
     const today = new Date(); today.setHours(0,0,0,0);
-    
-    const isRest = weeklyRestDays.includes(target.getDay());
-    const dayLogs = dailyLogs.filter((l) => l.date === dateStr);
 
-    if (target < today) {
-      return { isRest, dayLogs, recommendations: [], dateStr, isOverloaded: false, overloadReason: '' };
+    const isRest = weeklyRestDays.includes(target.getDay());
+    const dayLogs = dailyLogs.filter(l => l.date === dateStr);
+
+    let finalRecs: any[] = [];
+    let isOverloaded = false; 
+    let hasFutureOverload = false; 
+    let firstOverloadDateStr = '';  
+    let overloadReason = '';
+    let truncatedBooks: any[] = [];
+    let isExtremeRisk = false; 
+
+    if (!plans || plans.length === 0) {
+      return { isRest, dayLogs, recommendations: [], dateStr, isOverloaded, hasFutureOverload, firstOverloadDateStr, overloadReason, truncatedBooks, isExtremeRisk };
     }
 
-    let simulatedBooksProgress: { [bookId: string]: number } = {};
+    let simulatedProgress: { [bookId: string]: number } = {};
     plans.forEach(p => {
-      p.books.forEach(b => {
-        simulatedBooksProgress[b.id] = Number(b.completedUnits) || 0; 
-      });
+      if (p.books) {
+        p.books.forEach(b => { simulatedProgress[b.id] = 0; });
+      }
     });
 
-    let scanDate = new Date(today);
-    let finalRecsForTargetDay: any[] = [];
-    let isOverloadedForTargetDay = false;
-    let overloadReasonForTargetDay = '';
+    let earliestStart = new Date(today);
+    let absoluteLatestDeadline = new Date(today);
+    plans.forEach(p => {
+      if (p.books) {
+        p.books.forEach(b => {
+          const bStart = new Date(b.startDate || formatDateStr(today));
+          const bEnd = new Date(b.deadline);
+          if (bStart < earliestStart) earliestStart = bStart;
+          if (bEnd > absoluteLatestDeadline) absoluteLatestDeadline = bEnd;
+        });
+      }
+    });
+    earliestStart.setDate(earliestStart.getDate() - 2);
+    absoluteLatestDeadline.setDate(absoluteLatestDeadline.getDate() + 30);
 
-    const userCeiling = INTENSITY_CEILINGS[intensity];
-
-    while (scanDate <= target) {
+    let scanDate = new Date(earliestStart);
+    let mainLoopGuard = 0;
+    
+    while (scanDate <= absoluteLatestDeadline) {
+      mainLoopGuard++;
+      if (mainLoopGuard > 1000) break; 
+      
       const scanDateStr = formatDateStr(scanDate);
       const scanIsRest = weeklyRestDays.includes(scanDate.getDay());
-      
-      let daySelectedRecommendations: any[] = [];
-      let overLimitBookNames: string[] = [];
+      let currentDayRecsList: any[] = [];
+      let scanDayTruncatedBooks: any[] = [];
+      const realLogsThisScanDay = dailyLogs.filter(l => l.date === scanDateStr);
 
-      if (!scanIsRest) {
-        plans.forEach((p) => {
-          (p.books || []).forEach((b) => {
-            const deadline = new Date(b.deadline); deadline.setHours(0,0,0,0);
-            if (scanDate > deadline) return; 
+      plans.forEach(p => {
+        if (!p.books) return;
+        p.books.forEach(b => {
+          const bStart = new Date(b.startDate); bStart.setHours(0,0,0,0);
+          const bDeadline = new Date(b.deadline); bDeadline.setHours(0,0,0,0);
+          
+          if (scanDate < bStart || scanDate > bDeadline) return;
 
-            const totalRemainingDays = getRemainingWorkDays(scanDate, deadline);
-            const compUnits = simulatedBooksProgress[b.id];
+          const totalTargetUnits = b.totalUnits * (b.targetRounds || 1);
+          let currentPointer = simulatedProgress[b.id] || 0; 
 
-            const bookRounds = b.targetRounds || 1;
-            const totalTargetUnits = b.totalUnits * bookRounds;
-            const remainingTotalUnits = totalTargetUnits - compUnits;
+          if (currentPointer >= totalTargetUnits) return;
 
-            if (remainingTotalUnits <= 0) return; 
+          let finalDayUnits = 0;
+          let displayDetailStr = '';
 
-            let dailyRec = totalRemainingDays > 0 
-              ? (remainingTotalUnits / totalRemainingDays) 
-              : remainingTotalUnits;
-
-            let currentRound = Math.floor(compUnits / b.totalUnits) + 1;
-            let currentRoundCompleted = compUnits % b.totalUnits;
-            if (compUnits > 0 && currentRoundCompleted === 0) {
-              currentRound = Math.floor((compUnits - 1) / b.totalUnits) + 1;
-              currentRoundCompleted = b.totalUnits;
-            }
-
-            const roomInCurrentRound = b.totalUnits - (compUnits % b.totalUnits === 0 ? 0 : currentRoundCompleted);
-            if (roomInCurrentRound > 0) {
-              dailyRec = Math.min(dailyRec, roomInCurrentRound);
-            }
-
-            if (b.unitType === 'pages') {
-              dailyRec = Math.ceil(dailyRec);
+          if (!scanIsRest) {
+            const remainWorkDays = getRemainingWorkDays(scanDateStr, b.deadline);
+            if (remainWorkDays <= 0) {
+              isExtremeRisk = true;
+              finalDayUnits = Math.max(0, totalTargetUnits - currentPointer); 
             } else {
-              dailyRec = Math.round(dailyRec * 2) / 2 || 0.5; 
+              let rawRec = (totalTargetUnits - currentPointer) / remainWorkDays;
+              if (rawRec <= 0) rawRec = 0;
+
+              let calculatedRec = rawRec;
+              if (intensity === 'easy') {
+                calculatedRec = rawRec * 0.65;
+              } else if (intensity === 'sprint') {
+                calculatedRec = rawRec * 1.40;
+              }
+
+              if (b.unitType === 'pages') {
+                finalDayUnits = Math.ceil(calculatedRec);
+              } else {
+                if (calculatedRec < 1) {
+                  finalDayUnits = 1; 
+                  const daysNeededForOneChapter = Math.ceil(1 / calculatedRec);
+                  const currentChapterProgressDays = Math.floor((currentPointer % 1) * daysNeededForOneChapter);
+                  const currentDayNum = (currentChapterProgressDays % daysNeededForOneChapter) + 1;
+                  
+                  displayDetailStr = `(第 ${currentDayNum} 天 / 共 ${daysNeededForOneChapter} 天)`;
+                  finalDayUnits = 1 / daysNeededForOneChapter;
+                } else {
+                  finalDayUnits = Math.round(calculatedRec);
+                  if (finalDayUnits < 1) finalDayUnits = 1;
+                }
+              }
             }
-
-            if (b.unitType === 'pages' && dailyRec > userCeiling.pages) {
-              overLimitBookNames.push(`${b.title}(需${dailyRec}頁/上限${userCeiling.pages}頁)`);
-            } else if (b.unitType === 'chapters' && dailyRec > userCeiling.chapters) {
-              overLimitBookNames.push(`${b.title}(需${dailyRec}章/上限${userCeiling.chapters}章)`);
-            }
-
-            daySelectedRecommendations.push({
-              id: b.id,
-              title: b.title,
-              planName: p.name,
-              color: p.color,
-              rec: dailyRec,
-              unitType: b.unitType,
-              currentRound,
-              totalRounds: bookRounds,
-              currentRoundCompleted: compUnits % b.totalUnits === 0 && compUnits > 0 ? b.totalUnits : (compUnits % b.totalUnits),
-              remainingDays: totalRemainingDays,
-              totalUnits: b.totalUnits
-            });
-
-            simulatedBooksProgress[b.id] += dailyRec;
-          });
-        });
-
-        if (scanDateStr === dateStr) {
-          finalRecsForTargetDay = daySelectedRecommendations;
-          if (overLimitBookNames.length > 0) {
-            isOverloadedForTargetDay = true;
-            overloadReasonForTargetDay = `⚠️【行程衝突超載預警】目前算出的每日任務，已超出您設定的「${intensity === 'easy' ? '輕鬆念' : intensity === 'normal' ? '正常念' : '衝刺念'}」上限：[${overLimitBookNames.join(', ')}]。這通常是因為「死線太趕」或「休息日勾太多（例如一週只讀一天）」導致時間不夠分。系統已自動幫您解除限制、平攤正確量，並強烈建議您：調整死線或多勾選幾天讀書日！`;
           }
+
+          const incomingCValue = strategyCLogs
+            .filter(cl => cl.bookId === b.id && cl.targetDate === scanDateStr)
+            .reduce((sum, cl) => sum + cl.units, 0);
+          
+          if (incomingCValue > 0) {
+            finalDayUnits += incomingCValue;
+          }
+
+          const ceiling = INTENSITY_CEILINGS[intensity];
+          let maxAllowed = b.unitType === 'pages' ? ceiling.pages : ceiling.chapters;
+          let isDayTruncated = false;
+          let excessUnits = 0;
+
+          const checkCompareValue = b.unitType === 'pages' ? finalDayUnits : Math.ceil(finalDayUnits);
+          if (checkCompareValue > maxAllowed && intensity !== 'sprint') {
+            excessUnits = checkCompareValue - maxAllowed;
+            finalDayUnits = maxAllowed;
+            isDayTruncated = true;
+            displayDetailStr = ''; 
+          }
+
+          const outboundCValue = strategyCLogs
+            .filter(cl => cl.bookId === b.id && cl.sourceDate === scanDateStr)
+            .reduce((sum, cl) => sum + cl.units, 0);
+          
+          if (outboundCValue > 0) {
+            finalDayUnits = Math.max(0, finalDayUnits - outboundCValue);
+            isDayTruncated = false; 
+          }
+
+          if (scanDate < today) {
+            const matchedLog = realLogsThisScanDay.filter(l => l.bookId === b.id);
+            if (matchedLog.length > 0) {
+              finalDayUnits = matchedLog.reduce((s, c) => s + c.units, 0);
+            }
+          }
+
+          let startUnit = Math.floor(currentPointer % b.totalUnits) + 1;
+          let endUnit = Math.floor((currentPointer + finalDayUnits) % b.totalUnits);
+          if (endUnit === 0 && finalDayUnits > 0) endUnit = b.totalUnits;
+          if (endUnit < startUnit) endUnit = startUnit; 
+
+          if (isDayTruncated && excessUnits > 0) {
+            scanDayTruncatedBooks.push({
+              bookId: b.id,
+              title: b.title,
+              excess: Math.ceil(excessUnits),
+              unitType: b.unitType
+            });
+          }
+
+          if (scanDateStr === dateStr) {
+            if (!scanIsRest || finalDayUnits > 0) {
+              let rangeText = '';
+              if (b.unitType === 'pages') {
+                rangeText = startUnit === endUnit ? `第 ${startUnit} 頁` : `第 ${startUnit} ～ ${endUnit} 頁`;
+              } else {
+                if (displayDetailStr) {
+                  rangeText = `第 ${startUnit} 章 ${displayDetailStr}`;
+                } else {
+                  rangeText = startUnit === endUnit ? `第 ${startUnit} 章` : `第 ${startUnit} ～ ${endUnit} 章`;
+                }
+              }
+
+              if (outboundCValue > 0 && finalDayUnits <= 0) {
+                rangeText = '今日進度已完全移編至未來';
+              }
+
+              currentDayRecsList.push({
+                id: b.id,
+                title: b.title,
+                planName: p.name,
+                color: p.color,
+                rec: b.unitType === 'pages' ? finalDayUnits : Math.ceil(finalDayUnits), 
+                rawRec: finalDayUnits,
+                unitType: b.unitType,
+                rangeText: rangeText,
+                currentRound: Math.floor(currentPointer / b.totalUnits) + 1,
+                totalRounds: b.targetRounds || 1,
+                startDate: b.startDate,
+                deadline: b.deadline
+              });
+            }
+          }
+
+          simulatedProgress[b.id] = (simulatedProgress[b.id] || 0) + finalDayUnits;
+        });
+      });
+
+      if (scanDateStr === dateStr) {
+        finalRecs = currentDayRecsList;
+        truncatedBooks = scanDayTruncatedBooks;
+        if (scanDayTruncatedBooks.length > 0) {
+          isOverloaded = true;
+          overloadReason = `🧠【大腦負荷管理攔截】因休息日調整，導致今日平攤量觸及天花板。溢出殘值已放入下方【策略 C 調度中心】。`;
         }
-      } else {
-        if (scanDateStr === dateStr) finalRecsForTargetDay = [];
       }
+
+      if (scanDate > target && scanDayTruncatedBooks.length > 0 && !hasFutureOverload) {
+        hasFutureOverload = true;
+        firstOverloadDateStr = scanDateStr;
+      }
+
       scanDate.setDate(scanDate.getDate() + 1);
     }
 
-    return { 
-      isRest, 
-      dayLogs, 
-      recommendations: finalRecsForTargetDay, 
-      dateStr, 
-      isOverloaded: isOverloadedForTargetDay, 
-      overloadReason: overloadReasonForTargetDay
+    return {
+      isRest: isRest,
+      dayLogs,
+      recommendations: finalRecs,
+      dateStr,
+      isOverloaded,
+      hasFutureOverload,     
+      firstOverloadDateStr,  
+      overloadReason,
+      truncatedBooks,
+      isExtremeRisk
     };
   };
 
@@ -260,9 +476,6 @@ function App() {
     return grid;
   };
 
-  // ==========================================
-  // 4. CRUD 操作事件
-  // ==========================================
   const handleCreatePlan = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPlanName.trim() || !newPlanDeadline) return;
@@ -290,8 +503,9 @@ function App() {
           unitType: newBookUnitType,
           totalUnits: Number(newBookTotal),
           completedUnits: 0,
+          startDate: formatDateStr(new Date()), 
           deadline: newBookDeadline,
-          targetRounds: Number(newBookRounds) || 1
+          targetRounds: newBookRounds === '' ? 1 : Number(newBookRounds) 
         }]
       };
     }));
@@ -303,9 +517,9 @@ function App() {
     if (!reportBookId || !reportUnits || Number(reportUnits) <= 0) return;
 
     let targetPlanId = '';
-    let foundBook = plans.flatMap(p => p.books).find(b => {
+    let foundBook = plans.flatMap(p => p.books || []).find(b => {
       if (b.id === reportBookId) {
-        const p = plans.find(pl => pl.books.some(bk => bk.id === b.id));
+        const p = plans.find(pl => (pl.books || []).some(bk => bk.id === b.id));
         if (p) targetPlanId = p.id;
         return true;
       }
@@ -317,6 +531,7 @@ function App() {
     setDailyLogs([{ 
       id: Date.now().toString(), 
       date: reportDateStr, 
+      bookId: reportBookId,
       bookTitle: foundBook.title, 
       unitType: foundBook.unitType, 
       units: Number(reportUnits) 
@@ -326,106 +541,105 @@ function App() {
       if (p.id !== targetPlanId) return p;
       return {
         ...p,
-        books: p.books.map(b => b.id === reportBookId ? { ...b, completedUnits: (Number(b.completedUnits) || 0) + Number(reportUnits) } : b)
+        books: (p.books || []).map(b => b.id === reportBookId ? { ...b, completedUnits: (b.completedUnits || 0) + Number(reportUnits) } : b)
       };
     }));
     setReportUnits('');
   };
 
+  const handleDeleteLog = (logId: string, bookId: string, units: number) => {
+    if (!confirm(`確定要刪除這筆進度嗎？`)) return;
+    setDailyLogs(prev => prev.filter(l => l.id !== logId));
+    setPlans(prev => prev.map(p => ({
+      ...p,
+      books: (p.books || []).map(b => b.id === bookId ? { ...b, completedUnits: Math.max(0, (b.completedUnits || 0) - units) } : b)
+    })));
+  };
+
   const handleDeletePlan = (planId: string) => {
-    if (confirm('⚠️ 確定要刪除此大考科目框架嗎？')) {
-      setPlans(plans.filter(p => p.id !== planId));
-    }
+    if (confirm('⚠️ 確定要刪除此主考框架嗎？')) setPlans(plans.filter(p => p.id !== planId));
   };
 
   const handleDeleteBook = (planId: string, bookId: string) => {
     if (confirm('確定要移除此教材嗎？')) {
-      setPlans(plans.map(p => {
-        if (p.id !== planId) return p;
-        return { ...p, books: p.books.filter(b => b.id !== bookId) };
-      }));
+      setPlans(plans.map(p => p.id === planId ? { ...p, books: (p.books || []).filter(b => b.id !== bookId) } : p));
     }
   };
 
   const handleEditBook = (planId: string, bookId: string) => {
     const plan = plans.find(p => p.id === planId);
-    const book = plan?.books.find(b => b.id === bookId);
+    const book = plan?.books?.find(b => b.id === bookId);
     if (!book) return;
 
-    const newTitle = prompt(`修改書名：`, book.title);
-    const newTotal = prompt(`修改單輪總量：`, String(book.totalUnits));
+    const unitLabel = book.unitType === 'pages' ? '頁數' : '章節數';
+    const newTitle = prompt(`修改名稱：`, book.title);
+    const newTotal = prompt(`修改單輪總量 (${unitLabel})：`, String(book.totalUnits));
     const newRounds = prompt(`修改預計複習圈數：`, String(book.targetRounds || 1));
-    const newDate = prompt(`修改截止日 (YYYY-MM-DD)：`, book.deadline);
+    const newStart = prompt(`修正計畫起始日 (YYYY-MM-DD)：`, book.startDate || formatDateStr(new Date()));
+    const newDate = prompt(`修正死線日 (YYYY-MM-DD)：`, book.deadline);
 
-    if (newTitle && newTotal && newRounds && newDate) {
-      setPlans(plans.map(p => {
-        if (p.id !== planId) return p;
-        return {
-          ...p,
-          books: p.books.map(b => b.id === bookId ? {
-            ...b,
-            title: newTitle,
-            totalUnits: Number(newTotal),
-            targetRounds: Number(newRounds),
-            deadline: newDate
-          } : b)
-        };
-      }));
+    if (newTitle && newTotal && newRounds && newStart && newDate) {
+      setPlans(plans.map(p => p.id === planId ? {
+        ...p,
+        books: (p.books || []).map(b => b.id === bookId ? {
+          ...b, title: newTitle, totalUnits: Number(newTotal), targetRounds: Number(newRounds), startDate: newStart, deadline: newDate
+        } : b)
+      } : p));
     }
   };
 
-  const { isRest: activeIsRest, recommendations: activeRecs, isOverloaded: activeIsOverloaded, overloadReason: activeOverloadReason } = getDayPlanDetails(new Date(reportDateStr));
   const todayFormatted = formatDateStr(new Date());
+  
+  const { 
+    isRest: activeIsRest, 
+    recommendations: activeRecs = [], 
+    isOverloaded: activeIsOverloaded, 
+    hasFutureOverload: activeHasFutureOverload, 
+    firstOverloadDateStr: activeFirstOverloadDateStr, 
+    overloadReason: activeOverloadReason, 
+    truncatedBooks: activeTruncated = [], 
+    isExtremeRisk: activeExtremeRisk 
+  } = getDayPlanDetails(new Date(reportDateStr));
+
+  const checkGlobalExtremeRisk = () => {
+    if (plans.length === 0) return false;
+    return plans.some(p => (p.books || []).some(b => getRemainingWorkDays(todayFormatted, b.deadline) <= 1));
+  };
+  const globalExtremeWarning = checkGlobalExtremeRisk() || activeExtremeRisk;
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: 'system-ui, sans-serif', color: '#0f172a' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: 'system-ui, sans-serif', color: '#0f172a', fontSize: '16px' }}>
       
-      {/* 頂部控制面板 */}
-      <header style={{ backgroundColor: '#fff', borderBottom: '1px solid #e2e8f0', padding: '16px 20px', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <header style={{ backgroundColor: '#fff', borderBottom: '2px solid #cbd5e1', padding: '20px 24px', position: 'sticky', top: 0, zIndex: 50 }}>
+        <div style={{ maxWidth: '1240px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot V10 智慧無死角導航儀</h1>
-              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px', fontWeight: 'bold' }}>
-                📅 今天是：<span style={{ color: '#2563eb' }}>{todayFormatted}</span>
+              <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot V7 全域預演中控儀</h1>
+              <div style={{ fontSize: '14px', color: '#64748b', marginTop: '4px', fontWeight: 'bold' }}>
+                📅 今日絕對時間座標：<span style={{ color: '#2563eb' }}>{todayFormatted}</span>
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-              <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', padding: '0 8px' }}>🧠 大腦期望承載上限：</span>
-              <button 
-                onClick={() => setIntensity('easy')} 
-                style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer', border: 'none', borderRadius: '6px', fontWeight: 'bold', backgroundColor: intensity === 'easy' ? '#fff' : 'transparent', color: intensity === 'easy' ? '#1e40af' : '#64748b' }}
-              >
-                ☕ 輕鬆念 <span style={{ fontSize: '11px', color: '#3b82f6', marginLeft: '2px' }}>(上限: 1章/12頁)</span>
-              </button>
-              <button 
-                onClick={() => setIntensity('normal')} 
-                style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer', border: 'none', borderRadius: '6px', fontWeight: 'bold', backgroundColor: intensity === 'normal' ? '#fff' : 'transparent', color: intensity === 'normal' ? '#166534' : '#64748b' }}
-              >
-                ⚖️ 正常念 <span style={{ fontSize: '11px', color: '#10b981', marginLeft: '2px' }}>(上限: 2章/25頁)</span>
-              </button>
-              <button 
-                onClick={() => setIntensity('sprint')} 
-                style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer', border: 'none', borderRadius: '6px', fontWeight: 'bold', backgroundColor: intensity === 'sprint' ? '#fff' : 'transparent', color: intensity === 'sprint' ? '#991b1b' : '#64748b' }}
-              >
-                🔥 衝刺念 <span style={{ fontSize: '11px', color: '#ef4444', marginLeft: '2px' }}>(上限: 3章/45頁)</span>
-              </button>
+            <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#f1f5f9', padding: '6px', borderRadius: '10px', border: '2px solid #cbd5e1' }}>
+              <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#475569', padding: '0 10px' }}>🧠 讀書節奏實質介入：</span>
+              <button onClick={() => setIntensity('easy')} style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', border: 'none', borderRadius: '8px', fontWeight: 'bold', backgroundColor: intensity === 'easy' ? '#fff' : 'transparent', color: intensity === 'easy' ? '#1e40af' : '#64748b' }}>☕ 輕鬆念 <span style={{ fontSize: '11px', color: '#3b82f6' }}>(65折)</span></button>
+              <button onClick={() => setIntensity('normal')} style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', border: 'none', borderRadius: '8px', fontWeight: 'bold', backgroundColor: intensity === 'normal' ? '#fff' : 'transparent', color: intensity === 'normal' ? '#166534' : '#64748b' }}>⚖️ 正常念 <span style={{ fontSize: '11px', color: '#10b981' }}>(常態)</span></button>
+              <button onClick={() => setIntensity('sprint')} style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', border: 'none', borderRadius: '8px', fontWeight: 'bold', backgroundColor: intensity === 'sprint' ? '#fff' : 'transparent', color: intensity === 'sprint' ? '#991b1b' : '#64748b' }}>🔥 衝刺念 <span style={{ fontSize: '11px', color: '#ef4444' }}>(無上限)</span></button>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => setCurrentTab('dashboard')} style={{ padding: '6px 12px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', backgroundColor: currentTab === 'dashboard' ? '#eff6ff' : '#fff', color: currentTab === 'dashboard' ? '#2563eb' : '#475569', border: '1px solid #cbd5e1', borderRadius: '6px' }}>📊 今日作戰</button>
-              <button onClick={() => setCurrentTab('calendar')} style={{ padding: '6px 12px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', backgroundColor: currentTab === 'calendar' ? '#eff6ff' : '#fff', color: currentTab === 'calendar' ? '#2563eb' : '#475569', border: '1px solid #cbd5e1', borderRadius: '6px' }}>🗓️ 智慧量化行事曆</button>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => setCurrentTab('dashboard')} style={{ padding: '8px 16px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold', backgroundColor: currentTab === 'dashboard' ? '#eff6ff' : '#fff', color: currentTab === 'dashboard' ? '#2563eb' : '#475569', border: '2px solid #cbd5e1', borderRadius: '8px' }}>📊 作戰導航板</button>
+              <button onClick={() => setCurrentTab('calendar')} style={{ padding: '8px 16px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold', backgroundColor: currentTab === 'calendar' ? '#eff6ff' : '#fff', color: currentTab === 'calendar' ? '#2563eb' : '#475569', border: '2px solid #cbd5e1', borderRadius: '8px' }}>🗓️ 量化接續行事曆</button>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>🔒 勾選每週「隔離休息日」（不讀書的日子）：</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#475569' }}>🔒 每週固定隔離休息日：</span>
             {['日', '一', '二', '三', '四', '五', '六'].map((name, index) => {
               const isRest = weeklyRestDays.includes(index);
               return (
-                <label key={index} style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', backgroundColor: isRest ? '#fee2e2' : '#fff', padding: '3px 8px', borderRadius: '4px', border: isRest ? '1px solid #fca5a5' : '1px solid #cbd5e1', color: isRest ? '#991b1b' : '#475569', fontWeight: isRest ? 'bold' : 'normal' }}>
+                <label key={index} style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', backgroundColor: isRest ? '#fee2e2' : '#fff', padding: '4px 10px', borderRadius: '6px', border: isRest ? '2px solid #fca5a5' : '1px solid #cbd5e1', color: isRest ? '#991b1b' : '#475569', fontWeight: isRest ? 'bold' : 'normal' }}>
                   <input type="checkbox" checked={isRest} onChange={() => toggleRestDay(index)} style={{ cursor: 'pointer' }} />
                   週{name}
                 </label>
@@ -436,82 +650,88 @@ function App() {
         </div>
       </header>
 
-      <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px 20px' }}>
-        
-        {/* 🌟 需求3：全新改版 - 網頁使用指南 (SOP 實操教學流程) */}
-        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '2px solid #cbd5e1', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setShowGuide(!showGuide)}>
-            <h3 style={{ margin: 0, fontSize: '15px', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              🧭 第一次使用就上手？網頁功能操作指南 {showGuide ? '🔽' : '▶️'}
-            </h3>
-            <span style={{ fontSize: '12px', color: '#2563eb', fontWeight: 'bold' }}>{showGuide ? '[收合指南]' : '[點擊展開指南]'}</span>
+      <main style={{ maxWidth: '1240px', margin: '0 auto', padding: '24px 20px' }}>
+
+        {globalExtremeWarning && (
+          <div style={{ backgroundColor: '#fef2f2', border: '3px solid #ef4444', padding: '18px 22px', borderRadius: '12px', marginBottom: '24px', color: '#991b1b' }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '900' }}>⚠️ 核心防呆阻攔：大盤備考工作日已進入極端短缺狀態！</h3>
+            <p style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', lineHeight: '1.6' }}>
+              偵測到目前勾選了過多的休息日，或教材死線逼近，導致賸餘研讀有效天數嚴重缺血，大盤總量已無法常態平攤！<br/>
+              <strong>🛠️ 建議對策：</strong> 請立即解鎖部分「固定隔離休息日」，或點選下方教材庫的「修正生命期」拉長截止日期。
+            </p>
           </div>
-          
-          {showGuide && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginTop: '14px', borderTop: '1px solid #e2e8f0', paddingTop: '14px' }}>
-              <div style={{ fontSize: '12px', lineHeight: '1.6', color: '#475569', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px' }}>
-                <strong style={{ color: '#2563eb', fontSize: '13px' }}>第一步：🧱 建立大考與綁定書籍</strong>
-                <p style={{ margin: '4px 0 0 0' }}>先到左下角填寫<strong>「建立新考試主大框架」</strong>（例：高普考、證照檢定與其總死線）。接著到下方<strong>「綁定教材」</strong>，把要念的書名、總頁數（或章節數）填入，並可自由設定這本書你想<b>複習滾動幾輪</b>。</p>
-              </div>
-              <div style={{ fontSize: '12px', lineHeight: '1.6', color: '#475569', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px' }}>
-                <strong style={{ color: '#10b981', fontSize: '13px' }}>第二步：🧘 設定生活節奏與偏好</strong>
-                <p style={{ margin: '4px 0 0 0' }}>在頁面最頂端，勾選你<b>每週哪幾天要休息不碰書</b>（例：固定週六日放假）。接著選取你的<b>大腦承載極限</b>（輕鬆/正常/衝刺）。中央的「進度看板」與右側「大盤」便會立刻為你生成量身打造的每日精確計畫。</p>
-              </div>
-              <div style={{ fontSize: '12px', lineHeight: '1.6', color: '#475569', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px' }}>
-                <strong style={{ color: '#f59e0b', fontSize: '13px' }}>第三步：✍️ 每日讀完實質回報</strong>
-                <p style={{ margin: '4px 0 0 0' }}>每天讀完書後，請至左上角<strong>「進度實質回報」</strong>選取書籍、填寫今天「實質讀完的數量」。系統收到回報後，右側進度條會往前推進，大盤也會即時扣除，自動為你減輕明天以後的研讀壓力！</p>
-              </div>
-            </div>
-          )}
-        </div>
+        )}
+
+        {currentTab === 'dashboard' && activeHasFutureOverload && !activeIsOverloaded && (
+          <div style={{ backgroundColor: '#fffbeb', border: '3px solid #d97706', padding: '18px 22px', borderRadius: '12px', marginBottom: '24px', color: '#92400e' }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '900' }}>⚠️ 預演警報：大盤航線在「未來」即將遭遇超載風暴！</h3>
+            <p style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', lineHeight: '1.6' }}>
+              雖然當下（{reportDateStr}）的讀書進度看起來符合大腦上限，幕後模擬偵測到，由於先前休息日的延宕，大量未完進度已被擠壓到後半段。
+              首波超載預估將在 <strong style={{ color: '#dc2626', fontSize: '16px' }}>{activeFirstOverloadDateStr}</strong> 爆發！<br/>
+              <strong>💡 提早防護：</strong> 您可以提前增加讀書日，或者利用下方的進度回報多讀一點，平攤未來的壓力。
+            </p>
+          </div>
+        )}
 
         {currentTab === 'dashboard' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             
-            {/* 今日導航看板 */}
-            <div style={{ backgroundColor: activeIsOverloaded ? '#fef2f2' : '#f0fdf4', border: activeIsOverloaded ? '2px solid #ef4444' : '1px solid #bbf7d0', padding: '20px', borderRadius: '12px' }}>
-              <h3 style={{ margin: 0, color: activeIsOverloaded ? '#991b1b' : '#166534', fontSize: '16px' }}>
-                🚀 航線作戰進度看板 (觀察日期: <span style={{ color: '#2563eb' }}>{reportDateStr}</span>)
+            <div style={{ backgroundColor: activeIsOverloaded ? '#fff1f2' : activeIsRest ? '#f8fafc' : '#f0fdf4', border: activeIsOverloaded ? '2px solid #ef4444' : activeIsRest ? '2px solid #cbd5e1' : '2px solid #bbf7d0', padding: '24px', borderRadius: '14px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+              <h3 style={{ margin: 0, color: activeIsOverloaded ? '#991b1b' : activeIsRest ? '#475569' : '#166534', fontSize: '18px', fontWeight: '800' }}>
+                🚀 航線作戰進度分配建議 (觀測日期: <span style={{ color: '#2563eb' }}>{reportDateStr}</span>)
               </h3>
 
               {activeIsOverloaded && (
-                <div style={{ padding: '14px', backgroundColor: '#fff', border: '2px solid #ef4444', borderRadius: '8px', marginTop: '12px', fontSize: '12px', color: '#991b1b', fontWeight: 'bold', lineHeight: '1.6' }}>
+                <div style={{ padding: '16px', backgroundColor: '#fff', border: '2px solid #ef4444', borderRadius: '10px', marginTop: '14px', fontSize: '14px', color: '#b91c1c', fontWeight: 'bold', lineHeight: '1.6' }}>
                   {activeOverloadReason}
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '14px' }}>
-                {activeIsRest ? (
-                  <p style={{ margin: 0, fontWeight: 'bold', color: '#ef4444', fontSize: '13px' }}>🔒 本日為大腦隔離休息日。系統不派發任務，請放鬆沉澱！</p>
+              {activeTruncated.length > 0 && reportDateStr === todayFormatted && (
+                <div style={{ marginTop: '16px', backgroundColor: '#fff', border: '2px solid #3b82f6', borderRadius: '10px', padding: '16px' }}>
+                  <h4 style={{ margin: '0 0 10px 0', color: '#1d4ed8', fontSize: '15px', fontWeight: 'bold' }}>🧭 策略 C 殘值實質移轉器：</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {activeTruncated.map((tb, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f0f9ff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
+                        <span style={{ fontSize: '15px', fontWeight: 'bold' }}>📖 {tb.title} 超載溢出：<strong style={{ color: '#ef4444' }}>{tb.excess} {tb.unitType === 'pages' ? '頁' : '章'}</strong></span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => executeStrategyC(tb.bookId, tb.excess, 'next_study', reportDateStr)} style={{ backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>⏩ 移編至下一個讀書日</button>
+                          <button onClick={() => executeStrategyC(tb.bookId, tb.excess, 'next_rest', reportDateStr)} style={{ backgroundColor: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>🏖️ 填入下一個休息日</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '16px' }}>
+                {activeIsRest && activeRecs.length === 0 ? (
+                  <div style={{ padding: '12px 0', fontWeight: 'bold', color: '#475569', fontSize: '15px' }}>
+                    🔒 本日為大腦隔離休息日。基本航線零配給不排課，指針已凍結。請徹底放鬆！
+                  </div>
                 ) : activeRecs.length === 0 ? (
-                  <p style={{ margin: 0, color: '#64748b', fontStyle: 'italic', fontSize: '13px' }}>☕ 本日無任務，大盤科目都在安全航線內、或已完美達標！</p>
+                  <p style={{ margin: 0, color: '#64748b', fontStyle: 'italic', fontSize: '15px' }}>☕ 本日無常態任務（尚未到計畫起始日、進度超前，或今日進度已移出）。</p>
                 ) : (
                   activeRecs.map((r: any, i: number) => {
-                    const currentProgress = r.currentRoundCompleted;
-                    let startUnit = Math.floor(currentProgress) + 1;
-                    let endUnit = Math.ceil(currentProgress + r.rec);
-                    
-                    if (currentProgress === r.totalUnits) {
-                      startUnit = 1;
-                      endUnit = Math.ceil(r.rec);
-                    }
                     const unitName = r.unitType === 'pages' ? '頁' : '章';
-
                     return (
-                      <div key={i} style={{ backgroundColor: '#fff', padding: '12px 16px', borderRadius: '8px', borderLeft: `4px solid ${r.color}`, border: '1px solid #e2e8f0', minWidth: '250px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b' }}>
-                          <span>{r.planName}</span>
-                          <span style={{ color: '#b45309', fontWeight: 'bold' }}>🔄 輪次：{r.currentRound} / {r.totalRounds} 輪</span>
+                      <div key={i} style={{ backgroundColor: '#fff', padding: '16px 20px', borderRadius: '10px', borderLeft: `6px solid ${r.color}`, border: '1px solid #cbd5e1', minWidth: '280px', flex: '1' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#64748b', fontWeight: 'bold' }}>
+                          <span>🗂 "主框架" {r.planName}</span>
+                          <span style={{ color: '#b45309' }}>🔄 輪次：{r.currentRound} / {r.totalRounds}</span>
                         </div>
-                        <div style={{ fontWeight: 'bold', fontSize: '14px', marginTop: '4px' }}>
-                          {r.title}：<span style={{ color: '#2563eb', fontSize: '16px' }}>{r.rec} {unitName}</span>
+                        <div style={{ fontWeight: '900', fontSize: '18px', marginTop: '6px', color: '#0f172a' }}>
+                          {r.title}：<span style={{ color: '#2563eb', fontSize: '22px' }}>{r.rec} {unitName}</span>
                         </div>
                         
-                        <div style={{ fontSize: '12px', color: '#059669', backgroundColor: '#ecfdf5', padding: '6px', borderRadius: '4px', marginTop: '8px', fontWeight: 'bold', border: '1px solid #a7f3d0' }}>
-                          📍 當日進度目標：精念【第 {startUnit} ~ {endUnit} {unitName}】
-                          {r.rec % 1 !== 0 && <span style={{ color: '#b45309', marginLeft: '4px' }}>({r.rec} {unitName})</span>}
+                        <div style={{ fontSize: '14px', color: '#059669', backgroundColor: '#ecfdf5', padding: '8px 10px', borderRadius: '6px', marginTop: '10px', fontWeight: 'bold', border: '1px solid #a7f3d0' }}>
+                          <span>📍 研讀定位點：</span>
+                          <span>{r.rangeText}</span>
                         </div>
-                        <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '6px' }}>⏰ 剩餘讀書日：{r.remainingDays} 天</div>
+                        <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px', fontWeight: 'bold' }}>
+                          {/* 🛡️ [修復] 加入空值保護 */}
+                          📅 框架生命區間：{((r.startDate || '').replace(/-/g, '/'))} ～ {(r.deadline || '').replace(/-/g, '/')}
+                        </div>
                       </div>
                     );
                   })
@@ -519,183 +739,225 @@ function App() {
               </div>
             </div>
 
-            {/* 雙欄操作介面 */}
             <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
-              
-              {/* 左欄表單 */}
-              <div style={{ flex: '1 1 450px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ flex: '1 1 500px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 
-                {/* 回報 */}
-                <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #2563eb' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <h3 style={{ margin: 0, fontSize: '15px', color: '#1e3a8a' }}>✍️ 進度實質回報 / 歷史補登</h3>
-                    <select value={reportDateStr} onChange={e => setReportDateStr(e.target.value)} style={{ padding: '4px 8px', borderRadius: '6px', border: '2px solid #2563eb', fontSize: '12px', fontWeight: 'bold', color: '#2563eb', backgroundColor: '#f0f9ff', cursor: 'pointer' }}>
+                <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: 'bold' }}>🆕 建立新主考科目大框架</h3>
+                  <form onSubmit={handleCreatePlan} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <input type="text" placeholder="例如：食品檢驗分析乙級、生物技術大考" value={newPlanName} onChange={e => setNewPlanName(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    <input type="date" value={newPlanDeadline} onChange={e => setNewPlanDeadline(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    <button type="submit" style={{ backgroundColor: '#0f172a', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>確認建立科目框架</button>
+                  </form>
+                </div>
+
+                <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: 'bold' }}>📚 綁定教材進入排程</h3>
+                  <form onSubmit={handleAddBook} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <select value={selectedPlanId} onChange={e => setSelectedPlanId(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }} required>
+                      <option value="">-- 選擇所屬主框架 --</option>
+                      {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <input type="text" placeholder="教材 / 書籍講義全名" value={newBookTitle} onChange={e => setNewBookTitle(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    
+                    <div style={{ display: 'flex', gap: '16px', fontSize: '14px', fontWeight: 'bold' }}>
+                      <label style={{ cursor: 'pointer' }}><input type="radio" checked={newBookUnitType === 'pages'} onChange={() => setNewBookUnitType('pages')} /> 📄 頁數計算制</label>
+                      <label style={{ cursor: 'pointer' }}><input type="radio" checked={newBookUnitType === 'chapters'} onChange={() => setNewBookUnitType('chapters')} /> 🔖 章節計算制</label>
+                    </div>
+
+                    <input type="number" min="1" placeholder={newBookUnitType === 'pages' ? "請輸入單輪總頁數 (例如：350)" : "請輸入單輪總章節數 (example: 15)"} value={newBookTotal} onChange={e => setNewBookTotal(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🔄 預計精讀幾輪？</label>
+                      <input type="number" min="1" max="5" value={newBookRounds} onChange={e => setNewBookRounds(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🏁 該教材研讀截止死線：</label>
+                      <input type="date" value={newBookDeadline} onChange={e => setNewBookDeadline(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    </div>
+                    <button type="submit" style={{ backgroundColor: '#10b981', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>確認綁定教材</button>
+                  </form>
+                </div>
+
+                <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '12px', border: '2px solid #2563eb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <h3 style={{ margin: 0, fontSize: '16px', color: '#1e3a8a', fontWeight: 'bold' }}>✍️ 研讀進度實質回報</h3>
+                    <select value={reportDateStr} onChange={e => setReportDateStr(e.target.value)} style={{ padding: '6px 10px', borderRadius: '8px', border: '2px solid #2563eb', fontSize: '13px', fontWeight: 'bold', color: '#2563eb', backgroundColor: '#f0f9ff', cursor: 'pointer' }}>
                       {dateOptions.map(d => <option key={d} value={d}>{d === todayFormatted ? `今天 (${d})` : `歷史補登：${d}`}</option>)}
                     </select>
                   </div>
-                  <form onSubmit={handleReportProgress} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <select value={reportBookId} onChange={e => setReportBookId(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }} required>
+                  <form onSubmit={handleReportProgress} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <select value={reportBookId} onChange={e => setReportBookId(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }} required>
                       <option value="">-- 選擇研讀教材 --</option>
                       {plans.flatMap(p => (p.books || []).map(b => (
-                        <option key={b.id} value={b.id}>[{p.name}] {b.title} ({b.unitType === 'pages' ? '頁' : '章'})</option>
+                        <option key={b.id} value={b.id}>[{p.name}] {b.title} (回報單位: {b.unitType === 'pages' ? '頁' : '章'})</option>
                       )))}
                     </select>
-                    <input type="number" step="0.1" min="0.1" placeholder="填入精念完的實質進度 (可填小數如 0.5)" value={reportUnits} onChange={e => setReportUnits(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                    <button type="submit" style={{ backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>確認送出進度</button>
+                    <input type="number" step="0.1" min="0.1" placeholder="輸入實質完工的研讀量" value={reportUnits} onChange={e => setReportUnits(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    <button type="submit" style={{ backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>確認送出實質進度</button>
                   </form>
                 </div>
 
-                {/* 建立大考 */}
-                <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                  <h3 style={{ margin: '0 0 12px 0', fontSize: '15px' }}>🆕 建立新考試主大框架</h3>
-                  <form onSubmit={handleCreatePlan} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <input type="text" placeholder="大考/檢定名稱" value={newPlanName} onChange={e => setNewPlanName(e.target.value)} style={{ padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                    <input type="date" value={newPlanDeadline} onChange={e => setNewPlanDeadline(e.target.value)} style={{ padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                    <button type="submit" style={{ backgroundColor: '#0f172a', color: 'white', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>確認建立大框架</button>
-                  </form>
-                </div>
-
-                {/* 綁定書籍 */}
-                <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                  <h3 style={{ margin: '0 0 12px 0', fontSize: '15px' }}>📚 綁定教材 (支援自訂複習圈數)</h3>
-                  <form onSubmit={handleAddBook} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <select value={selectedPlanId} onChange={e => setSelectedPlanId(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }} required>
-                      <option value="">-- 選擇所屬主大框架 --</option>
-                      {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                    <input type="text" placeholder="書名 / 講義名稱" value={newBookTitle} onChange={e => setNewBookTitle(e.target.value)} style={{ padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                    <div style={{ display: 'flex', gap: '12px', fontSize: '13px' }}>
-                      <label><input type="radio" checked={newBookUnitType === 'pages'} onChange={() => setNewBookUnitType('pages')} /> 📄 頁數</label>
-                      <label><input type="radio" checked={newBookUnitType === 'chapters'} onChange={() => setNewBookUnitType('chapters')} /> 🔖 章節</label>
-                    </div>
-                    <input type="number" min="1" placeholder="單輪總量 (頁數或章節數)" value={newBookTotal} onChange={e => setNewBookTotal(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>🔄 預計滾動精念幾輪？(預設 1 輪)</label>
-                      <input type="number" min="1" max="5" value={newBookRounds} onChange={e => setNewBookRounds(Number(e.target.value) || 1)} style={{ padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                    </div>
-
-                    <input type="date" value={newBookDeadline} onChange={e => setNewBookDeadline(e.target.value)} style={{ padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                    <button type="submit" style={{ backgroundColor: '#10b981', color: 'white', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>開啟客製化多輪精念航線</button>
-                  </form>
-                </div>
               </div>
 
-              {/* 右欄：大盤 */}
-              <div style={{ flex: '1 1 450px', backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                <h3 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>📊 備考大盤教材庫</h3>
-                {plans.length === 0 ? <p style={{ fontSize: '13px', color: '#64748b', fontStyle: 'italic' }}>大盤空空如也。</p> : plans.map(p => (
-                  <div key={p.id} style={{ marginBottom: '24px', padding: '14px', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', borderLeft: `5px solid ${p.color}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#1e293b' }}>🗂️ {p.name}</span>
-                      <button onClick={() => handleDeletePlan(p.id)} style={{ padding: '2px 8px', fontSize: '11px', color: '#ef4444', border: '1px solid #fca5a5', backgroundColor: '#fef2f2', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ 刪除科目</button>
-                    </div>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
-                      {(p.books || []).map(b => {
-                        const totalComp = Number(b.completedUnits) || 0;
-                        const bookRounds = b.targetRounds || 1;
+              <div style={{ flex: '1 1 500px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                
+                <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: 'bold' }}>📊 備考大盤教材總庫</h3>
+                  {plans.length === 0 ? <p style={{ fontSize: '14px', color: '#64748b', fontStyle: 'italic' }}>目前大盤清空狀態。</p> : plans.map(p => (
+                    <div key={p.id} style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: `6px solid ${p.color}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: '900', fontSize: '16px', color: '#1e293b' }}>🗂️ {p.name}</span>
+                        <button onClick={() => handleDeletePlan(p.id)} style={{ padding: '4px 10px', fontSize: '12px', color: '#ef4444', border: '1px solid #fca5a5', backgroundColor: '#fef2f2', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ 刪除主框架</button>
+                      </div>
+                      
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '14px' }}>
+                        {(p.books || []).map(b => {
+                          const totalComp = b.completedUnits || 0;
+                          const bookRounds = b.targetRounds || 1;
+                          const globalMaxUnits = b.totalUnits * bookRounds;
+                          const globalPct = Math.min(100, Math.round((totalComp / globalMaxUnits) * 100));
+                          const remainWorkDays = getRemainingWorkDays(formatDateStr(new Date()), b.deadline);
+                          const currentUnitLabel = b.unitType === 'pages' ? '頁' : '章';
 
-                        let currentRound = Math.floor(totalComp / b.totalUnits) + 1;
-                        let currentRoundCompleted = totalComp % b.totalUnits;
+                          return (
+                            <div key={b.id} style={{ backgroundColor: '#fff', padding: '14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <strong style={{ fontSize: '15px', color: '#0f172a' }}>📖 {b.title} <span style={{ color: '#64748b', fontSize: '13px' }}>({b.unitType === 'pages' ? '頁數制' : '章節制'})</span></strong>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button onClick={() => handleEditBook(p.id, b.id)} style={{ padding: '4px 8px', fontSize: '12px', color: '#2563eb', border: '1px solid #bfdbfe', backgroundColor: '#eff6ff', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>✏️ 修正生命期</button>
+                                  <button onClick={() => handleDeleteBook(p.id, b.id)} style={{ padding: '4px 8px', fontSize: '12px', color: '#ef4444', border: '1px solid #fca5a5', backgroundColor: '#fef2f2', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ 移除</button>
+                                </div>
+                              </div>
 
-                        if (totalComp > 0 && currentRoundCompleted === 0) {
-                          currentRound = Math.floor((totalComp - 1) / b.totalUnits) + 1;
-                          currentRoundCompleted = b.totalUnits;
-                        }
+                              <div style={{ fontSize: '13px', color: '#334155', margin: '8px 0', backgroundColor: '#f0fdf4', padding: '8px 10px', borderRadius: '6px', border: '1px solid #bbf7d0', lineHeight: '1.5' }}>
+                                {/* 🛡️ [修復] 加入空值保護 */}
+                                📅 <strong>生命區間：</strong>{((b.startDate || '').replace(/-/g, '/'))} ～ {(b.deadline || '').replace(/-/g, '/')} <br/>
+                                ⏱️ <strong>大盤賸餘有效工作天：</strong><span style={{ color: '#16a34a', fontWeight: 'bold' }}>{remainWorkDays} 天</span> ｜ 輪次：<strong>{bookRounds}</strong> 輪
+                              </div>
 
-                        const singleRoundPct = currentRoundCompleted === b.totalUnits 
-                          ? 100 
-                          : Math.min(99, Math.floor((currentRoundCompleted / b.totalUnits) * 100));
-
-                        const globalMaxUnits = b.totalUnits * bookRounds;
-                        const globalPct = Math.min(100, Math.round((totalComp / globalMaxUnits) * 100));
-
-                        return (
-                          <div key={b.id} style={{ backgroundColor: '#fff', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <strong style={{ fontSize: '13px' }}>📖 {b.title}</strong>
-                              <div style={{ display: 'flex', gap: '6px' }}>
-                                <button onClick={() => handleEditBook(p.id, b.id)} style={{ padding: '2px 6px', fontSize: '11px', color: '#2563eb', border: '1px solid #bfdbfe', backgroundColor: '#eff6ff', borderRadius: '4px', cursor: 'pointer' }}>✏️ 修正</button>
-                                <button onClick={() => handleDeleteBook(p.id, b.id)} style={{ padding: '2px 6px', fontSize: '11px', color: '#ef4444', border: '1px solid #fca5a5', backgroundColor: '#fef2f2', borderRadius: '4px', cursor: 'pointer' }}>🗑️ 移除</button>
+                              <div style={{ fontSize: '13px', color: '#64748b', display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
+                                <span>大盤總量：({totalComp} / {globalMaxUnits} {currentUnitLabel})</span>
+                                <span style={{ fontWeight: 'bold', color: p.color }}>{globalPct}%</span>
+                              </div>
+                              <div style={{ width: '100%', backgroundColor: '#e2e8f0', height: '10px', borderRadius: '5px', margin: '4px 0', overflow: 'hidden' }}>
+                                <div style={{ width: `${globalPct}%`, backgroundColor: p.color, height: '100%' }}></div>
                               </div>
                             </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
 
-                            <div style={{ fontSize: '11px', color: '#475569', margin: '6px 0', backgroundColor: '#f0fdf4', padding: '6px', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
-                              🏁 死線：<strong>{b.deadline}</strong> ｜ 🔄 指定複習目標：<strong>精念 {bookRounds} 輪</strong>
-                            </div>
-
-                            <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
-                              <span>第 {currentRound} 輪當前進度：{currentRoundCompleted} / {b.totalUnits}</span>
-                              <span style={{ fontWeight: 'bold' }}>{singleRoundPct}%</span>
-                            </div>
-                            <div style={{ width: '100%', backgroundColor: '#e2e8f0', height: '6px', borderRadius: '3px', margin: '4px 0', overflow: 'hidden' }}>
-                              <div style={{ width: `${singleRoundPct}%`, backgroundColor: '#3b82f6', height: '100%' }}></div>
-                            </div>
-
-                            <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', justifyContent: 'space-between', marginTop: '6px' }}>
-                              <span>跨輪總大局達標率：</span>
-                              <span style={{ fontWeight: 'bold', color: p.color }}>{globalPct}%</span>
-                            </div>
-                            <div style={{ width: '100%', backgroundColor: '#e2e8f0', height: '8px', borderRadius: '4px', margin: '4px 0', overflow: 'hidden' }}>
-                              <div style={{ width: `${globalPct}%`, backgroundColor: p.color, height: '100%' }}></div>
-                            </div>
+                {strategyCLogs.length > 0 && (
+                  <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #3b82f6' }}>
+                    <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#1d4ed8', fontWeight: 'bold' }}>🧭 策略 C 歷史調度流水帳</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {strategyCLogs.map((cl, idx) => {
+                        const bk = plans.flatMap(p => p.books || []).find(b => b.id === cl.bookId);
+                        const label = bk?.unitType === 'pages' ? '頁' : '章';
+                        return (
+                          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '14px' }}>
+                            <span>🎯 從 {cl.sourceDate} 移出 📖 <strong>{bk?.title || '未知'}</strong> {cl.units} {label} ➡️ 疊加至 <strong>{cl.targetDate}</strong></span>
+                            <button onClick={() => clearStrategyCLog(idx)} style={{ backgroundColor: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontWeight: 'bold' }}>撤銷</button>
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                ))}
-              </div>
+                )}
 
+                <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#334155', fontWeight: 'bold' }}>🛠️ 研讀回報歷史流水帳</h3>
+                  <div style={{ maxHeight: '250px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {dailyLogs.length === 0 ? (
+                      <p style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', margin: 0 }}>暫無紀錄。</p>
+                    ) : dailyLogs.map(log => (
+                      <div key={log.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '14px' }}>
+                        <div>
+                          <span style={{ color: '#64748b', marginRight: '6px', fontWeight: 'bold' }}>[{log.date}]</span>
+                          <strong>{log.bookTitle}</strong> 
+                          <span style={{ marginLeft: '8px', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                            +{log.units} {log.unitType === 'pages' ? '頁' : '章'}
+                          </span>
+                        </div>
+                        <button onClick={() => handleDeleteLog(log.id, log.bookId, log.units)} style={{ border: 'none', backgroundColor: 'transparent', color: '#ef4444', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ 撤銷</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
             </div>
           </div>
         )}
 
-        {/* 智慧量化行事曆 */}
         {currentTab === 'calendar' && (
-          <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px' }}>
-              <button onClick={() => currentMonth === 0 ? (setCurrentMonth(11), setCurrentYear(y => y - 1)) : setCurrentMonth(m => m - 1)} style={{ padding: '6px 12px', backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>◀ 上個月</button>
-              <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>🗓️ {currentYear} 年 {currentMonth + 1} 月 智慧預警排班行事曆</h2>
-              <button onClick={() => currentMonth === 11 ? (setCurrentMonth(0), setCurrentYear(y => y + 1)) : setCurrentMonth(m => m + 1)} style={{ padding: '6px 12px', backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>下個月 ▶</button>
+          <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '14px', border: '1px solid #cbd5e1' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', backgroundColor: '#f8fafc', padding: '14px 20px', borderRadius: '10px' }}>
+              <button onClick={() => currentMonth === 0 ? (setCurrentMonth(11), setCurrentYear(y => y - 1)) : setCurrentMonth(m => m - 1)} style={{ padding: '8px 16px', backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}>◀ 上個月</button>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '900' }}>🗓️ {currentYear} 年 {currentMonth + 1} 月 智慧配速行事曆</h2>
+                <button onClick={handleGoToToday} style={{ padding: '6px 14px', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>🏠 回到今天</button>
+              </div>
+
+              <button onClick={() => currentMonth === 11 ? (setCurrentMonth(0), setCurrentYear(y => y + 1)) : setCurrentMonth(m => m + 1)} style={{ padding: '8px 16px', backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}>下個月 ▶</button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', textAlign: 'center', fontWeight: 'bold', paddingBottom: '8px', borderBottom: '2px solid #e2e8f0', marginBottom: '8px', fontSize: '13px' }}>
-              {['日', '一', '二', '三', '四', '五', '六'].map((w, i) => <div key={w} style={{ color: weeklyRestDays.includes(i) ? '#ef4444' : '#475569' }}>{w}</div>)}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', textAlign: 'center', fontWeight: '900', paddingBottom: '12px', borderBottom: '3px solid #e2e8f0', marginBottom: '12px', fontSize: '15px' }}>
+              {['日', '一', '二', '三', '四', '五', '六'].map((w, i) => <div key={w} style={{ color: weeklyRestDays.includes(i) ? '#ef4444' : '#475569' }}>週{w}</div>)}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
               {getMonthGrid().map((grid, idx) => {
-                const { isRest, recommendations, dateStr, isOverloaded } = getDayPlanDetails(grid.date);
+                const { isRest, recommendations = [], dateStr, isOverloaded, dayLogs } = getDayPlanDetails(grid.date);
                 const isToday = todayFormatted === dateStr;
 
                 return (
                   <div
                     key={idx}
-                    onClick={() => setActiveDialog({ dateStr, isRest, recommendations, isOverloaded })}
+                    onClick={() => setActiveDialog({ dateStr, isRest, recommendations, isOverloaded, dayLogs })}
                     style={{
-                      border: isToday ? '2px solid #2563eb' : isOverloaded ? '2px solid #ef4444' : '1px solid #e2e8f0',
-                      borderRadius: '8px', padding: '6px', minHeight: '110px',
-                      backgroundColor: isRest ? '#fff5f5' : isOverloaded ? '#fff1f2' : grid.isCurrent ? '#fff' : '#f8fafc',
+                      border: isToday ? '3px solid #2563eb' : isOverloaded ? '2px solid #ef4444' : '1px solid #cbd5e1',
+                      borderRadius: '10px', padding: '8px', minHeight: '130px',
+                      backgroundColor: isRest ? '#f1f5f9' : isOverloaded ? '#fff1f2' : grid.isCurrent ? '#fff' : '#f8fafc',
                       opacity: grid.isCurrent ? 1 : 0.4, cursor: 'pointer',
                       display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxSizing: 'border-box'
                     }}
                   >
-                    <div style={{ fontSize: '11px', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: isToday ? '#2563eb' : '#1e293b' }}>{grid.date.getDate()}</span>
-                      {isOverloaded && <span style={{ color: '#ef4444', backgroundColor: '#fee2e2', borderRadius: '4px', padding: '0 2px' }}>⚠️超載</span>}
+                    <div style={{ fontSize: '13px', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: isRest ? '#94a3b8' : isToday ? '#2563eb' : '#1e293b', fontSize: '14px', fontWeight: '900' }}>{grid.date.getDate()}</span>
+                      {isRest && <span style={{ color: '#94a3b8', fontSize: '11px', fontWeight: 'bold' }}>🔒休息</span>}
+                      {isOverloaded && !isRest && <span style={{ color: '#dc2626', backgroundColor: '#fee2e2', borderRadius: '4px', padding: '0 4px', fontSize: '11px', fontWeight: 'bold' }}>⚠️超載</span>}
                     </div>
                     
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', margin: '4px 0', overflow: 'hidden' }}>
-                      {!isRest && recommendations.map((r, i) => {
-                        const currentProgress = r.currentRoundCompleted;
-                        let startUnit = Math.floor(currentProgress) + 1;
-                        let endUnit = Math.ceil(currentProgress + r.rec);
-                        const unitLabel = r.unitType === 'pages' ? 'p' : '章';
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', margin: '6px 0', overflow: 'hidden' }}>
+                      {recommendations.map((r, i) => {
+                        const taskKey = `${dateStr}_${r.id}`;
+                        const isTaskChecked = !!checkedTasks[taskKey];
+
                         return (
-                          <div key={i} style={{ backgroundColor: r.color, color: 'white', fontSize: '9px', padding: '2px 4px', borderRadius: '4px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: 'bold' }}>
-                            {r.title}: {startUnit}~{endUnit}{unitLabel}
+                          <div 
+                            key={i} 
+                            onClick={(e) => e.stopPropagation()} 
+                            style={{ 
+                              backgroundColor: isTaskChecked ? '#cbd5e1' : r.color, 
+                              color: isTaskChecked ? '#64748b' : 'white', 
+                              fontSize: '11px', padding: '3px 5px', borderRadius: '5px', 
+                              whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: 'bold',
+                              textDecoration: isTaskChecked ? 'line-through' : 'none',
+                              display: 'flex', alignItems: 'center', gap: '3px'
+                            }}
+                          >
+                            <input type="checkbox" checked={isTaskChecked} onChange={() => toggleTaskCheck(dateStr, r.id)} style={{ transform: 'scale(0.85)', cursor: 'pointer', margin: 0 }} />
+                            {/* 🛡️ [修復] 加入空值保護 */}
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {r.title}: {(r.rangeText || '').replace('章 (第', ' (').replace('天 / 共', '/').replace('天)', '')}
+                            </span>
                           </div>
                         );
                       })}
@@ -710,35 +972,49 @@ function App() {
 
       </main>
 
-      {/* 詳細對話框 */}
+      {showUndoBar && undoSnapshot && (
+        <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#1e293b', color: 'white', padding: '14px 24px', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)', display: 'flex', alignItems: 'center', gap: '20px', zIndex: 9999, border: '1px solid #475569' }}>
+          <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🧭 策略 C 殘值已移編！全域持久暫存保護中...</span>
+          <button onClick={triggerUndo} style={{ backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: '900', cursor: 'pointer' }}>↩️ 立即復原調度 (Undo)</button>
+        </div>
+      )}
+
       {activeDialog && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }} onClick={() => setActiveDialog(null)}>
-          <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '12px', maxWidth: '450px', width: '90%' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 12px 0', borderBottom: '1px solid #e2e8f0', paddingBottom: '6px', fontSize: '15px' }}>📅 任務詳情 ({activeDialog.dateStr})</h3>
-            {activeDialog.isRest ? (
-              <p style={{ color: '#ef4444', fontWeight: 'bold', fontSize: '13px' }}>🔒 本日為隔離休息日，暫無航線指派。</p>
+          <div style={{ backgroundColor: 'white', padding: '28px', borderRadius: '16px', maxWidth: '500px', width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 16px 0', borderBottom: '2px solid #e2e8f0', paddingBottom: '10px', fontSize: '18px', fontWeight: 'bold' }}>📅 任務清單詳細觀測 ({activeDialog.dateStr})</h3>
+            
+            {activeDialog.isRest && (activeDialog.recommendations || []).length === 0 ? (
+              <p style={{ color: '#475569', fontWeight: 'bold', fontSize: '15px', backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}>🔒 本日為大腦隔離休息日。大盤進度零配給，指針與身心安全靠岸。</p>
+            ) : (activeDialog.recommendations || []).length === 0 ? (
+              <p style={{ color: '#64748b', fontStyle: 'italic', fontSize: '15px' }}>本日無常態指派任務。</p>
             ) : (
               <div>
-                {activeDialog.recommendations.map((r: any, i: number) => {
-                  const currentProgress = r.currentRoundCompleted;
-                  let startUnit = Math.floor(currentProgress) + 1;
-                  let endUnit = Math.ceil(currentProgress + r.rec);
+                {(activeDialog.recommendations || []).map((r: any, i: number) => {
                   const name = r.unitType === 'pages' ? '頁' : '章';
+                  const taskKey = `${activeDialog.dateStr}_${r.id}`;
+                  const isTaskChecked = !!checkedTasks[taskKey];
+                  const actualUnitsSpent = (activeDialog.dayLogs || []).filter((l: any) => l.bookId === r.id).reduce((sum: number, current: any) => sum + current.units, 0);
+
                   return (
-                    <div key={i} style={{ fontSize: '13px', margin: '12px 0', borderLeft: `4px solid ${r.color}`, paddingLeft: '10px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-                        <span>[{r.planName}] {r.title}</span>
-                        <span style={{ color: r.color }}>共 {r.rec} {name}</span>
+                    <div key={i} style={{ fontSize: '15px', margin: '16px 0', borderLeft: `5px solid ${r.color}`, paddingLeft: '12px', opacity: isTaskChecked ? 0.5 : 1 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input type="checkbox" checked={isTaskChecked} onChange={() => toggleTaskCheck(activeDialog.dateStr, r.id)} style={{ transform: 'scale(1.1)', cursor: 'pointer' }} />
+                          <span style={{ textDecoration: isTaskChecked ? 'line-through' : 'none', fontSize: '16px' }}>{r.title}</span>
+                        </div>
+                        <span style={{ color: r.color, fontSize: '16px', fontWeight: '900' }}>共 {r.rec} {name}</span>
                       </div>
-                      <div style={{ fontSize: '12px', color: '#059669', marginTop: '4px', backgroundColor: '#f0fdf4', padding: '4px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
-                        📍 精念範圍：第 {startUnit} ~ {endUnit} {name} (第 {r.currentRound}/{r.totalRounds} 輪)
+                      <div style={{ fontSize: '14px', color: '#059669', marginTop: '6px', backgroundColor: '#f0fdf4', padding: '6px 10px', borderRadius: '6px', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', border: '1px solid #a7f3d0' }}>
+                        <span>📍 定位範圍：{r.rangeText}</span>
+                        {actualUnitsSpent > 0 && <span style={{ color: '#2563eb' }}>已報: {actualUnitsSpent} {name}</span>}
                       </div>
                     </div>
                   );
                 })}
               </div>
             )}
-            <button onClick={() => setActiveDialog(null)} style={{ marginTop: '16px', width: '100%', padding: '8px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>關閉</button>
+            <button onClick={() => setActiveDialog(null)} style={{ marginTop: '20px', width: '100%', padding: '12px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '15px' }}>關閉視窗</button>
           </div>
         </div>
       )}
