@@ -9,15 +9,16 @@ interface Book {
   unitType: 'pages' | 'chapters'; 
   totalUnits: number;
   completedUnits: number; 
-  startDate: string;       
-  deadline: string;        
+  startDate: string;       // 精準綁定教材開始日
+  deadline: string;        // 教材截止日
   targetRounds: number;    
 }
 
 interface StudyPlan {
   id: string;
   name: string;
-  deadline: string;        
+  startDate: string;       // 精準綁定科目框架開始日
+  deadline: string;        // 科目死線
   books: Book[];
   color: string;
 }
@@ -43,7 +44,6 @@ interface UndoSnapshot {
   timestamp: number;
 }
 
-// 🛡️ [修復] 加入安全讀取工具，防止 JSON 解析崩潰
 const safeLoad = (key: string, defaultValue: any) => {
   try {
     const saved = localStorage.getItem(key);
@@ -68,7 +68,8 @@ const formatDateStr = (date: Date) => {
 };
 
 function App() {
-  // 🛡️ [修復] 使用 safeLoad 確保初始化不崩潰
+  const todayFormatted = formatDateStr(new Date());
+
   const [intensity, setIntensity] = useState<IntensityMode>(() => {
     return (localStorage.getItem('pilot_intensity_v7') as IntensityMode) || 'normal';
   });
@@ -88,14 +89,19 @@ function App() {
   const [currentYear, setCurrentYear] = useState<number>(() => new Date().getFullYear());
   const [currentMonth, setCurrentMonth] = useState<number>(() => new Date().getMonth());
   const [activeDialog, setActiveDialog] = useState<any | null>(null);
-  const [reportDateStr, setReportDateStr] = useState<string>(formatDateStr(new Date()));
+  const [reportDateStr, setReportDateStr] = useState<string>(todayFormatted);
 
+  // 新增科目框架控管
   const [newPlanName, setNewPlanName] = useState('');
+  const [newPlanStartDate, setNewPlanStartDate] = useState(todayFormatted); // 預設今天
   const [newPlanDeadline, setNewPlanDeadline] = useState('');
+  
+  // 新增教材庫控管
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [newBookTitle, setNewBookTitle] = useState('');
   const [newBookUnitType, setNewBookUnitType] = useState<'pages' | 'chapters'>('pages');
   const [newBookTotal, setNewBookTotal] = useState<number | ''>('');
+  const [newBookStartDate, setNewBookStartDate] = useState(todayFormatted); // 預設今天
   const [newBookDeadline, setNewBookDeadline] = useState(''); 
   const [newBookRounds, setNewBookRounds] = useState<number | ''>(1); 
   
@@ -104,6 +110,14 @@ function App() {
 
   const [dateOptions, setDateOptions] = useState<string[]>([]);
   
+  const checkDateNotPast = (dateStr: string, label: string) => {
+    if (dateStr < todayFormatted) {
+      alert(`⚠️ 防呆阻攔：【${label}】不能早於今天！`);
+      return false;
+    }
+    return true;
+  };
+
   useEffect(() => {
     const options = [];
     for (let i = 0; i < 7; i++) {
@@ -113,10 +127,14 @@ function App() {
     setDateOptions(options);
   }, []);
 
+  // 當選擇所屬科目框架時，教材的起訖日自動對齊該框架，方便使用者微調
   useEffect(() => {
     if (selectedPlanId) {
       const p = plans.find(pl => pl.id === selectedPlanId);
-      if (p) setNewBookDeadline(p.deadline);
+      if (p) {
+        setNewBookStartDate(p.startDate || todayFormatted);
+        setNewBookDeadline(p.deadline);
+      }
     }
   }, [selectedPlanId, plans]);
 
@@ -270,6 +288,8 @@ function App() {
     let earliestStart = new Date(today);
     let absoluteLatestDeadline = new Date(today);
     plans.forEach(p => {
+      const pStart = new Date(p.startDate || formatDateStr(today));
+      if (pStart < earliestStart) earliestStart = pStart;
       if (p.books) {
         p.books.forEach(b => {
           const bStart = new Date(b.startDate || formatDateStr(today));
@@ -301,6 +321,7 @@ function App() {
           const bStart = new Date(b.startDate); bStart.setHours(0,0,0,0);
           const bDeadline = new Date(b.deadline); bDeadline.setHours(0,0,0,0);
           
+          // 核心邏輯：如果觀測日期尚未到達教材設定的開始日，直接跳過不配給進度
           if (scanDate < bStart || scanDate > bDeadline) return;
 
           const totalTargetUnits = b.totalUnits * (b.targetRounds || 1);
@@ -312,6 +333,7 @@ function App() {
           let displayDetailStr = '';
 
           if (!scanIsRest) {
+            // 從模擬的當天（scanDateStr）算到截止日
             const remainWorkDays = getRemainingWorkDays(scanDateStr, b.deadline);
             if (remainWorkDays <= 0) {
               isExtremeRisk = true;
@@ -478,21 +500,38 @@ function App() {
 
   const handleCreatePlan = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPlanName.trim() || !newPlanDeadline) return;
+    if (!newPlanName.trim() || !newPlanStartDate || !newPlanDeadline) return;
+    
+    if (!checkDateNotPast(newPlanStartDate, "科目框架起始日")) return;
+    if (!checkDateNotPast(newPlanDeadline, "科目框架截止日")) return;
+    if (newPlanDeadline < newPlanStartDate) {
+      alert("⚠️ 截止日不能早於起始日！");
+      return;
+    }
+
     const colors = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
     setPlans([...plans, {
       id: Date.now().toString(),
       name: newPlanName,
+      startDate: newPlanStartDate,
       deadline: newPlanDeadline,
       color: colors[plans.length % colors.length],
       books: []
     }]);
-    setNewPlanName(''); setNewPlanDeadline('');
+    setNewPlanName(''); setNewPlanStartDate(todayFormatted); setNewPlanDeadline('');
   };
 
   const handleAddBook = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPlanId || !newBookTitle.trim() || !newBookTotal || !newBookDeadline) return;
+    if (!selectedPlanId || !newBookTitle.trim() || !newBookTotal || !newBookStartDate || !newBookDeadline) return;
+    
+    if (!checkDateNotPast(newBookStartDate, "教材研讀起始日")) return;
+    if (!checkDateNotPast(newBookDeadline, "教材研讀截止日")) return;
+    if (newBookDeadline < newBookStartDate) {
+      alert("⚠️ 教材截止日不能早於起始日！");
+      return;
+    }
+
     setPlans(prev => prev.map(p => {
       if (p.id !== selectedPlanId) return p;
       return {
@@ -503,7 +542,7 @@ function App() {
           unitType: newBookUnitType,
           totalUnits: Number(newBookTotal),
           completedUnits: 0,
-          startDate: formatDateStr(new Date()), 
+          startDate: newBookStartDate, // 保存客製化教材開始日
           deadline: newBookDeadline,
           targetRounds: newBookRounds === '' ? 1 : Number(newBookRounds) 
         }]
@@ -587,8 +626,6 @@ function App() {
       } : p));
     }
   };
-
-  const todayFormatted = formatDateStr(new Date());
   
   const { 
     isRest: activeIsRest, 
@@ -729,7 +766,6 @@ function App() {
                           <span>{r.rangeText}</span>
                         </div>
                         <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px', fontWeight: 'bold' }}>
-                          {/* 🛡️ [修復] 加入空值保護 */}
                           📅 框架生命區間：{((r.startDate || '').replace(/-/g, '/'))} ～ {(r.deadline || '').replace(/-/g, '/')}
                         </div>
                       </div>
@@ -746,7 +782,19 @@ function App() {
                   <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: 'bold' }}>🆕 建立新主考科目大框架</h3>
                   <form onSubmit={handleCreatePlan} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <input type="text" placeholder="例如：食品檢驗分析乙級、生物技術大考" value={newPlanName} onChange={e => setNewPlanName(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
-                    <input type="date" value={newPlanDeadline} onChange={e => setNewPlanDeadline(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    
+                    {/* 新增與明確提示：科目開始日期 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>📅 科目框架起始日 (從哪一天開始排程與準備)：</label>
+                      <input type="date" value={newPlanStartDate} onChange={e => setNewPlanStartDate(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    </div>
+
+                    {/* 明確提示：科目結束日期 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🏁 科目框架截止日 (大考日期 / 總計畫終點)：</label>
+                      <input type="date" value={newPlanDeadline} onChange={e => setNewPlanDeadline(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    </div>
+
                     <button type="submit" style={{ backgroundColor: '#0f172a', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>確認建立科目框架</button>
                   </form>
                 </div>
@@ -765,15 +813,22 @@ function App() {
                       <label style={{ cursor: 'pointer' }}><input type="radio" checked={newBookUnitType === 'chapters'} onChange={() => setNewBookUnitType('chapters')} /> 🔖 章節計算制</label>
                     </div>
 
-                    <input type="number" min="1" placeholder={newBookUnitType === 'pages' ? "請輸入單輪總頁數 (例如：350)" : "請輸入單輪總章節數 (example: 15)"} value={newBookTotal} onChange={e => setNewBookTotal(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    <input type="number" min="1" placeholder={newBookUnitType === 'pages' ? "請輸入單輪總頁數 (例如：350)" : "請輸入單輪總章節數 (例如：15)"} value={newBookTotal} onChange={e => setNewBookTotal(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🔄 預計精讀幾輪？</label>
                       <input type="number" min="1" max="5" value={newBookRounds} onChange={e => setNewBookRounds(e.target.value === '' ? '' : Number(e.target.value))} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     </div>
 
+                    {/* 新增與明確提示：教材開始日期 */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🏁 該教材研讀截止死線：</label>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>📅 教材研讀起始日 (這本講義預計從哪天動工)：</label>
+                      <input type="date" value={newBookStartDate} onChange={e => setNewBookStartDate(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
+                    </div>
+
+                    {/* 明確提示：教材結束日期 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🏁 該教材研讀截止死線 (何時要精讀完畢)：</label>
                       <input type="date" value={newBookDeadline} onChange={e => setNewBookDeadline(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     </div>
                     <button type="submit" style={{ backgroundColor: '#10b981', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>確認綁定教材</button>
@@ -808,7 +863,12 @@ function App() {
                   {plans.length === 0 ? <p style={{ fontSize: '14px', color: '#64748b', fontStyle: 'italic' }}>目前大盤清空狀態。</p> : plans.map(p => (
                     <div key={p.id} style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: `6px solid ${p.color}` }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: '900', fontSize: '16px', color: '#1e293b' }}>🗂️ {p.name}</span>
+                        <div>
+                          <span style={{ fontWeight: '900', fontSize: '16px', color: '#1e293b' }}>🗂️ {p.name}</span>
+                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                            📅 框架生命期：{(p.startDate || '').replace(/-/g, '/')} ～ {(p.deadline || '').replace(/-/g, '/')}
+                          </div>
+                        </div>
                         <button onClick={() => handleDeletePlan(p.id)} style={{ padding: '4px 10px', fontSize: '12px', color: '#ef4444', border: '1px solid #fca5a5', backgroundColor: '#fef2f2', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ 刪除主框架</button>
                       </div>
                       
@@ -831,18 +891,12 @@ function App() {
                                 </div>
                               </div>
 
-                              <div style={{ fontSize: '13px', color: '#334155', margin: '8px 0', backgroundColor: '#f0fdf4', padding: '8px 10px', borderRadius: '6px', border: '1px solid #bbf7d0', lineHeight: '1.5' }}>
-                                {/* 🛡️ [修復] 加入空值保護 */}
-                                📅 <strong>生命區間：</strong>{((b.startDate || '').replace(/-/g, '/'))} ～ {(b.deadline || '').replace(/-/g, '/')} <br/>
-                                ⏱️ <strong>大盤賸餘有效工作天：</strong><span style={{ color: '#16a34a', fontWeight: 'bold' }}>{remainWorkDays} 天</span> ｜ 輪次：<strong>{bookRounds}</strong> 輪
-                              </div>
-
-                              <div style={{ fontSize: '13px', color: '#64748b', display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
-                                <span>大盤總量：({totalComp} / {globalMaxUnits} {currentUnitLabel})</span>
-                                <span style={{ fontWeight: 'bold', color: p.color }}>{globalPct}%</span>
-                              </div>
                               <div style={{ width: '100%', backgroundColor: '#e2e8f0', height: '10px', borderRadius: '5px', margin: '4px 0', overflow: 'hidden' }}>
                                 <div style={{ width: `${globalPct}%`, backgroundColor: p.color, height: '100%' }}></div>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#475569', marginTop: '6px', fontWeight: 'bold' }}>
+                                <span>📈 總進度：{totalComp} / {globalMaxUnits} {currentUnitLabel} ({globalPct}%)</span>
+                                <span style={{ color: remainWorkDays <= 5 ? '#dc2626' : '#2563eb' }}>⏳ 賸餘有效讀書日：{remainWorkDays} 天</span>
                               </div>
                             </div>
                           );
@@ -946,7 +1000,7 @@ function App() {
                             onClick={(e) => e.stopPropagation()} 
                             style={{ 
                               backgroundColor: isTaskChecked ? '#cbd5e1' : r.color, 
-                              color: isTaskChecked ? '#64748b' : 'white', 
+                              color: isTaskChecked ? '#475569' : 'white', // 修正為高對比度深灰
                               fontSize: '11px', padding: '3px 5px', borderRadius: '5px', 
                               whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: 'bold',
                               textDecoration: isTaskChecked ? 'line-through' : 'none',
@@ -954,7 +1008,6 @@ function App() {
                             }}
                           >
                             <input type="checkbox" checked={isTaskChecked} onChange={() => toggleTaskCheck(dateStr, r.id)} style={{ transform: 'scale(0.85)', cursor: 'pointer', margin: 0 }} />
-                            {/* 🛡️ [修復] 加入空值保護 */}
                             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {r.title}: {(r.rangeText || '').replace('章 (第', ' (').replace('天 / 共', '/').replace('天)', '')}
                             </span>
