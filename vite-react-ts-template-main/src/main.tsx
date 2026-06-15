@@ -44,7 +44,6 @@ interface UndoSnapshot {
   timestamp: number;
 }
 
-// 🌟 修正：多段突發狀況無法閱讀日的資料結構
 interface FreezeRange {
   id: string;
   start: string;
@@ -78,25 +77,22 @@ function App() {
   const todayFormatted = formatDateStr(new Date());
 
   const [intensity, setIntensity] = useState<IntensityMode>(() => {
-    return (localStorage.getItem('pilot_intensity_v10') as IntensityMode) || 'normal';
+    return (localStorage.getItem('pilot_intensity_v11') as IntensityMode) || 'normal';
   });
 
-  const [plans, setPlans] = useState<StudyPlan[]>(() => safeLoad('pilot_plans_v10', []));
-  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => safeLoad('pilot_logs_v10', []));
-  const [weeklyRestDays, setWeeklyRestDays] = useState<number[]>(() => safeLoad('pilot_rest_v10', [0, 6]));
-  const [checkedTasks, setCheckedTasks] = useState<{ [key: string]: boolean }>(() => safeLoad('pilot_checked_tasks_v10', {}));
-  const [strategyCLogs, setStrategyCLogs] = useState<StrategyCLog[]>(() => safeLoad('pilot_strategy_c_v10', []));
-  const [undoSnapshot, setUndoSnapshot] = useState<UndoSnapshot | null>(() => safeLoad('pilot_undo_snapshot_v10', null));
-  
-  // 🌟 升級：支援多段突發狀況無法閱讀日清單
-  const [freezeRanges, setFreezeRanges] = useState<FreezeRange[]>(() => safeLoad('pilot_freeze_ranges_v10', []));
+  const [plans, setPlans] = useState<StudyPlan[]>(() => safeLoad('pilot_plans_v11', []));
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => safeLoad('pilot_logs_v11', []));
+  const [weeklyRestDays, setWeeklyRestDays] = useState<number[]>(() => safeLoad('pilot_rest_v11', [0, 6]));
+  const [checkedTasks, setCheckedTasks] = useState<{ [key: string]: boolean }>(() => safeLoad('pilot_checked_tasks_v11', {}));
+  const [strategyCLogs, setStrategyCLogs] = useState<StrategyCLog[]>(() => safeLoad('pilot_strategy_c_v11', []));
+  const [undoSnapshot, setUndoSnapshot] = useState<UndoSnapshot | null>(() => safeLoad('pilot_undo_snapshot_v11', null));
+  const [freezeRanges, setFreezeRanges] = useState<FreezeRange[]>(() => safeLoad('pilot_freeze_ranges_v11', []));
 
-  // 暫存輸入用的新單組區間
   const [tmpFreezeStart, setTmpFreezeStart] = useState<string>('');
   const [tmpFreezeEnd, setTmpFreezeEnd] = useState<string>('');
 
   const [showUndoBar, setShowUndoBar] = useState<boolean>(() => {
-    return localStorage.getItem('pilot_show_undobar_v10') === 'true';
+    return localStorage.getItem('pilot_show_undobar_v11') === 'true';
   });
 
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
@@ -105,12 +101,10 @@ function App() {
   const [activeDialog, setActiveDialog] = useState<any | null>(null);
   const [reportDateStr, setReportDateStr] = useState<string>(todayFormatted);
 
-  // 科目框架大標籤控管
   const [newPlanName, setNewPlanName] = useState('');
   const [newPlanStartDate, setNewPlanStartDate] = useState(todayFormatted); 
   const [newPlanDeadline, setNewPlanDeadline] = useState('');
   
-  // 教材庫控管
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [newBookTitle, setNewBookTitle] = useState('');
   const [newBookUnitType, setNewBookUnitType] = useState<'pages' | 'chapters'>('pages');
@@ -152,15 +146,15 @@ function App() {
   }, [selectedPlanId, plans]);
 
   useEffect(() => {
-    localStorage.setItem('pilot_intensity_v10', intensity);
-    localStorage.setItem('pilot_plans_v10', JSON.stringify(plans));
-    localStorage.setItem('pilot_logs_v10', JSON.stringify(dailyLogs));
-    localStorage.setItem('pilot_rest_v10', JSON.stringify(weeklyRestDays));
-    localStorage.setItem('pilot_checked_tasks_v10', JSON.stringify(checkedTasks));
-    localStorage.setItem('pilot_strategy_c_v10', JSON.stringify(strategyCLogs));
-    localStorage.setItem('pilot_undo_snapshot_v10', JSON.stringify(undoSnapshot));
-    localStorage.setItem('pilot_show_undobar_v10', String(showUndoBar));
-    localStorage.setItem('pilot_freeze_ranges_v10', JSON.stringify(freezeRanges));
+    localStorage.setItem('pilot_intensity_v11', intensity);
+    localStorage.setItem('pilot_plans_v11', JSON.stringify(plans));
+    localStorage.setItem('pilot_logs_v11', JSON.stringify(dailyLogs));
+    localStorage.setItem('pilot_rest_v11', JSON.stringify(weeklyRestDays));
+    localStorage.setItem('pilot_checked_tasks_v11', JSON.stringify(checkedTasks));
+    localStorage.setItem('pilot_strategy_c_v11', JSON.stringify(strategyCLogs));
+    localStorage.setItem('pilot_undo_snapshot_v11', JSON.stringify(undoSnapshot));
+    localStorage.setItem('pilot_show_undobar_v11', String(showUndoBar));
+    localStorage.setItem('pilot_freeze_ranges_v11', JSON.stringify(freezeRanges));
   }, [intensity, plans, dailyLogs, weeklyRestDays, checkedTasks, strategyCLogs, undoSnapshot, showUndoBar, freezeRanges]);
 
   useEffect(() => {
@@ -196,7 +190,6 @@ function App() {
     setReportDateStr(formatDateStr(today));
   };
 
-  // 🌟 新增一組突發狀況無法閱讀日區間
   const handleAddFreezeRange = (e: React.FormEvent) => {
     e.preventDefault();
     if (!tmpFreezeStart || !tmpFreezeEnd) return;
@@ -214,17 +207,14 @@ function App() {
     setTmpFreezeEnd('');
   };
 
-  // 🗑️ 刪除一組突發狀況區間
   const handleRemoveFreezeRange = (id: string) => {
     setFreezeRanges(freezeRanges.filter(r => r.id !== id));
   };
 
-  // 🌟 判定特定日期是否命中「任何一段」無法閱讀區間
   const isDateInFreezeRanges = (dateStr: string) => {
     return freezeRanges.some(r => dateStr >= r.start && dateStr <= r.end);
   };
 
-  // 💡 【核心演算法修正】：全自動多段排除讀書日計算
   const getRemainingWorkDays = (startStr: string, endStr: string) => {
     let count = 0;
     let curr = new Date(startStr); curr.setHours(0,0,0,0);
@@ -239,7 +229,6 @@ function App() {
       const isWeekRest = weeklyRestDays.includes(curr.getDay());
       const isFrozen = isDateInFreezeRanges(currStr);
 
-      // 必須既非每週固定休息，也未命中任何突發不讀書區間，才是實質工作日
       if (!isWeekRest && !isFrozen) {
         count++;
       }
@@ -650,12 +639,13 @@ function App() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: 'system-ui, sans-serif', color: '#0f172a', fontSize: '16px' }}>
       
-      <header style={{ backgroundColor: '#fff', borderBottom: '2px solid #cbd5e1', padding: '20px 24px', position: 'sticky', top: 0, zIndex: 50 }}>
+      {/* 🌟 修正：移除 position: sticky 等吸附屬性，使其隨滾輪自然滑動移出畫面 */}
+      <header style={{ backgroundColor: '#fff', borderBottom: '2px solid #cbd5e1', padding: '20px 24px' }}>
         <div style={{ maxWidth: '1240px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot V10 複數排除航線控制儀</h1>
+              <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot V11 複數排除航線控制儀</h1>
               <div style={{ fontSize: '14px', color: '#64748b', marginTop: '4px', fontWeight: 'bold' }}>
                 📅 今日絕對時間座標：<span style={{ color: '#2563eb' }}>{todayFormatted}</span>
               </div>
@@ -675,7 +665,6 @@ function App() {
           </div>
 
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-            {/* 每週固定隔離休息日 */}
             <div style={{ flex: '1 1 400px', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#475569' }}>🔒 每週固定隔離休息日：</span>
               {['日', '一', '二', '三', '四', '五', '六'].map((name, index) => {
@@ -689,13 +678,11 @@ function App() {
               })}
             </div>
 
-            {/* 🌟 升級：多段突發狀況無法閱讀日管理中樞 */}
             <div style={{ flex: '1 1 700px', display: 'flex', flexDirection: 'column', gap: '8px', backgroundColor: '#fff7ed', padding: '14px 18px', borderRadius: '10px', border: '2px solid #ffedd5' }}>
               <div style={{ fontSize: '14px', color: '#7c2d12', fontWeight: 'bold', lineHeight: '1.4' }}>
                 💡 <strong>功能說明：</strong> 輸入您未來確定無法閱讀的複數個區間（例如7月某週、8月某幾天），系統會以輸入當下為基準，<strong>立刻將這些區間的閱讀總量提早平攤到今天之後的所有研讀日</strong>，自動避開每週固定休息日，確保計畫不吃緊。
               </div>
 
-              {/* 輸入控制列 */}
               <form onSubmit={handleAddFreezeRange} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', borderBottom: '1px dashed #fed7aa', paddingBottom: '8px' }}>
                 <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#c2410c' }}>➕ 新增無法閱讀日：</span>
                 <input type="date" value={tmpFreezeStart} onChange={e => setTmpFreezeStart(e.target.value)} style={{ padding: '4px 8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '6px' }} required />
@@ -704,7 +691,6 @@ function App() {
                 <button type="submit" style={{ padding: '4px 12px', fontSize: '12px', cursor: 'pointer', backgroundColor: '#ea580c', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold' }}>納入排除清單</button>
               </form>
 
-              {/* 已排扣例外清單展示 */}
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', contentVisibility: 'auto' }}>
                 {freezeRanges.length === 0 ? (
                   <span style={{ fontSize: '12px', color: '#9a3412', fontStyle: 'italic' }}>📌 目前無登記特殊排除日期（大盤全線全速運轉中）</span>
@@ -784,7 +770,7 @@ function App() {
                     🔒 本日為每週固定隔離休息日。基本航線零配給，指針凍結。請徹底放鬆！
                   </div>
                 ) : activeRecs.length === 0 ? (
-                  <p style={{ margin: 0, color: '#64748b', fontStyle: 'italic', fontSize: '15px' }}>☕ 本日無常態任務（尚未到計畫起始日、進度超前，或今日進度已移出）。</p>
+                  <p style={{ margin: 0, color: '#64748b', fontStyle: 'italic', fontSize: '15px' }}>☕ 本日無常態任務（尚未到計畫起始日、進度超前， or 今日進度已移出）。</p>
                 ) : (
                   activeRecs.map((r: any, i: number) => {
                     const unitName = r.unitType === 'pages' ? '頁' : '章';
