@@ -48,10 +48,6 @@ interface FreezeRange {
   end: string;
 }
 
-// 【V29 核心修正】引入版本控制控制閘，強制沖刷干擾新演算法的舊快取變數
-const CURRENT_VERSION = 'v29_stable';
-const KEY_VERSION = 'studypilot_version';
-
 const KEY_INTENSITY = 'studypilot_intensity';
 const KEY_PLANS = 'studypilot_plans';
 const KEY_LOGS = 'studypilot_logs';
@@ -61,15 +57,10 @@ const KEY_STRATEGYC = 'studypilot_strategy_c';
 const KEY_FREEZE = 'studypilot_freeze_ranges';
 const KEY_REPLAN_DATE = 'studypilot_replan_start_date';
 
-const bridgeLoad = (key: string, oldV11Key: string, defaultValue: any) => {
+const bridgeLoad = (key: string, defaultValue: any) => {
   try {
     const current = localStorage.getItem(key);
     if (current) return JSON.parse(current);
-    const old = localStorage.getItem(oldV11Key);
-    if (old) {
-      localStorage.setItem(key, old);
-      return JSON.parse(old);
-    }
     return defaultValue;
   } catch (e) {
     return defaultValue;
@@ -113,12 +104,12 @@ function App() {
     return (localStorage.getItem(KEY_INTENSITY) as IntensityMode) || 'normal';
   });
 
-  const [plans, setPlans] = useState<StudyPlan[]>(() => bridgeLoad(KEY_PLANS, 'pilot_plans_v11', []));
-  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => bridgeLoad(KEY_LOGS, 'pilot_logs_v11', []));
-  const [weeklyRestDays, setWeeklyRestDays] = useState<number[]>(() => bridgeLoad(KEY_REST, 'pilot_rest_v11', [0, 6]));
-  const [checkedTasks, setCheckedTasks] = useState<{ [key: string]: boolean }>(() => bridgeLoad(KEY_CHECKED, 'pilot_checked_tasks_v11', {}));
-  const [strategyCLogs, setStrategyCLogs] = useState<StrategyCLog[]>(() => bridgeLoad(KEY_STRATEGYC, 'pilot_strategy_c_v11', []));
-  const [freezeRanges, setFreezeRanges] = useState<FreezeRange[]>(() => bridgeLoad(KEY_FREEZE, 'pilot_freeze_ranges_v11', []));
+  const [plans, setPlans] = useState<StudyPlan[]>(() => bridgeLoad(KEY_PLANS, []));
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => bridgeLoad(KEY_LOGS, []));
+  const [weeklyRestDays, setWeeklyRestDays] = useState<number[]>(() => bridgeLoad(KEY_REST, [0, 6]));
+  const [checkedTasks, setCheckedTasks] = useState<{ [key: string]: boolean }>(() => bridgeLoad(KEY_CHECKED, {}));
+  const [strategyCLogs, setStrategyCLogs] = useState<StrategyCLog[]>(() => bridgeLoad(KEY_STRATEGYC, []));
+  const [freezeRanges, setFreezeRanges] = useState<FreezeRange[]>(() => bridgeLoad(KEY_FREEZE, []));
   const [replanStartDate, setReplanStartDate] = useState<string>(() => {
     return localStorage.getItem(KEY_REPLAN_DATE) || todayFormatted;
   });
@@ -148,19 +139,6 @@ function App() {
   const [showReplanModal, setShowReplanModal] = useState<boolean>(false);
   const [modalReplanDate, setModalReplanDate] = useState<string>(todayFormatted);
   const [dateOptions, setDateOptions] = useState<string[]>([]);
-  
-  // 【V29 強制修正機制】首次載入時，如果發現版本不對，立刻對齊切點、清除過期移編阻礙
-  useEffect(() => {
-    const savedVer = localStorage.getItem(KEY_VERSION);
-    if (savedVer !== CURRENT_VERSION) {
-      localStorage.setItem(KEY_VERSION, CURRENT_VERSION);
-      localStorage.setItem(KEY_REPLAN_DATE, todayFormatted);
-      localStorage.setItem(KEY_STRATEGYC, JSON.stringify([]));
-      setReplanStartDate(todayFormatted);
-      setStrategyCLogs([]);
-      console.log("🚀 StudyPilot V29 核心演算法快取成功完成強制校準同步！");
-    }
-  }, [todayFormatted]);
 
   const getSelectedBookUnitLabel = () => {
     if (!reportBookId) return '';
@@ -266,14 +244,23 @@ function App() {
     return count;
   };
 
+  // 純物理日曆天數計算 (不扣除休息日)
+  const getCalendarDaysRemaining = (endStr: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const end = parseLocalDate(endStr);
+    const diffTime = end.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays < 0 ? 0 : diffDays;
+  };
+
   const handleExecuteReplan = () => {
     setReplanStartDate(modalReplanDate);
-    setStrategyCLogs([]); // 清空過往積壓的移編紀錄，重新配速
+    setStrategyCLogs([]); 
     setShowReplanModal(false);
     alert(`🎯 配速校準成功！已將 ${modalReplanDate} 設定為全新配速重新計算基準日。`);
   };
 
-  // 共享配速演算大腦核心
   const getDayPlanDetails = (gridDate: Date) => {
     const target = new Date(gridDate.getFullYear(), gridDate.getMonth(), gridDate.getDate(), 0, 0, 0, 0);
     const dateStr = formatDateStr(target);
@@ -287,13 +274,12 @@ function App() {
 
     let finalRecs: any[] = [];
     let isOverloaded = false; 
-    let hasFutureOverload = false; 
-    let firstOverloadDateStr = '';  
+    let globalFutureOverload = false; // 全域未來爆量偵測
+    let globalFirstOverloadDateStr = '';  
     let truncatedBooks: any[] = [];
-    let isExtremeRisk = false; 
 
     if (!plans || plans.length === 0) {
-      return { isRest, isFrozenDay, dayLogs, recommendations: [], dateStr, isOverloaded, hasFutureOverload, firstOverloadDateStr, overloadReason: '', truncatedBooks, isExtremeRisk };
+      return { isRest, isFrozenDay, dayLogs, recommendations: [], dateStr, isOverloaded, globalFutureOverload, globalFirstOverloadDateStr, overloadReason: '', truncatedBooks };
     }
 
     let simulatedProgress: { [bookId: string]: number } = {};
@@ -356,7 +342,6 @@ function App() {
 
             const remainWorkDays = getRemainingWorkDays(calculationStartDateStr, b.deadline);
             if (remainWorkDays <= 0) {
-              if (intensity !== 'sprint') isExtremeRisk = true;
               finalDayUnits = Math.max(0, totalTargetUnits - currentPointer); 
             } else {
               let rawRec = (totalTargetUnits - currentPointer) / remainWorkDays;
@@ -411,7 +396,13 @@ function App() {
             }
           }
 
+          // 全域超前部署預警偵測：只要今天之後有任何一天碰到天花板，立刻觸發警告
           if (isDayBookOverloaded && scanDateStr >= todayStr) {
+            if (!globalFutureOverload) {
+              globalFutureOverload = true;
+              globalFirstOverloadDateStr = scanDateStr;
+            }
+
             const diff = oriUnitsBeforeTruncate - finalDayUnits;
             let nextValidDate = new Date(scanDate.getFullYear(), scanDate.getMonth(), scanDate.getDate() + 1, 0,0,0,0);
             let nextGuard = 0;
@@ -480,35 +471,14 @@ function App() {
         });
       });
 
-      if (scanDateStr > dateStr && isOverloaded === false && intensity !== 'sprint') {
-        plans.forEach(p => {
-          if (!p.books) return;
-          p.books.forEach(b => {
-            const bStart = parseLocalDate(b.startDate); const bDeadline = parseLocalDate(b.deadline);
-            if (scanDate < bStart || scanDate > bDeadline) return;
-            const activeCeilingMode = scanDateStr < todayStr ? 'normal' : intensity;
-            const ceiling = INTENSITY_CONFIGS[activeCeilingMode].ceilings;
-            let checkPointer = simulatedProgress[b.id] || 0;
-            if (checkPointer >= b.totalUnits * (b.targetRounds || 1)) return;
-            if (!scanIsRest) {
-              const remainWorkDays = getRemainingWorkDays(scanDateStr, b.deadline);
-              if (remainWorkDays > 0) {
-                let rRec = ((b.totalUnits * (b.targetRounds || 1)) - checkPointer) / remainWorkDays;
-                if (intensity === 'easy') rRec *= 0.65; else if (intensity === 'sprint') rRec *= 1.40;
-                if (b.unitType === 'pages' && rRec > ceiling.pages && !hasFutureOverload) { hasFutureOverload = true; firstOverloadDateStr = scanDateStr; }
-                else if (b.unitType === 'chapters' && rRec > ceiling.chapters && !hasFutureOverload) { hasFutureOverload = true; firstOverloadDateStr = scanDateStr; }
-              }
-            }
-          });
-        });
-      }
-
       scanDate.setDate(scanDate.getDate() + 1);
     }
 
     return {
       isRest, isFrozenDay, dayLogs, recommendations: finalRecs, dateStr,
-      isOverloaded, hasFutureOverload, firstOverloadDateStr, overloadReason: '🧠【備考大腦防護斷路器】偵測到今日部分教材量能觸頂！系統已自動平攤超出部分。', truncatedBooks, isExtremeRisk
+      isOverloaded, globalFutureOverload, globalFirstOverloadDateStr, 
+      overloadReason: '🧠【備考大腦防護斷路器】偵測到今日部分教材量能觸頂！系統已自動平攤超出部分。', 
+      truncatedBooks
     };
   };
 
@@ -624,20 +594,25 @@ function App() {
 
   const parsedTargetDate = parseLocalDate(reportDateStr);
   const { 
-    isRest: activeIsRest, isFrozenDay: activeIsFrozen, recommendations: activeRecs = [], 
-    isOverloaded: activeIsOverloaded, dayLogs: activeDayLogs = [], overloadReason: activeOverloadReason, 
-    truncatedBooks: activeTruncatedBooks = []
+    isRest: activeIsRest, 
+    isFrozenDay: activeIsFrozen, 
+    recommendations: activeRecs = [], 
+    isOverloaded: activeIsOverloaded, 
+    dayLogs: activeDayLogs = [], 
+    overloadReason: activeOverloadReason, 
+    truncatedBooks: activeTruncatedBooks = [],
+    globalFutureOverload: activeGlobalFutureOverload,
+    globalFirstOverloadDateStr: activeGlobalFirstOverloadDate
   } = getDayPlanDetails(parsedTargetDate);
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: 'system-ui, sans-serif', color: '#0f172a', fontSize: '16px' }}>
-      
       <header style={{ backgroundColor: '#fff', borderBottom: '2px solid #cbd5e1', padding: '20px 24px' }}>
         <div style={{ maxWidth: '1240px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '20px' }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot 每日備考領航員 (V29)</h1>
+              <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot 每日備考領航員</h1>
               <div style={{ fontSize: '14px', color: '#64748b', marginTop: '4px', fontWeight: 'bold' }}>
                 📅 今日時間座標：<span style={{ color: '#2563eb' }}>{todayFormatted}</span>
                 {replanStartDate !== todayFormatted && <span style={{ marginLeft: '12px', color: '#b45309' }}>🔄 已於 {replanStartDate} 執行重新安排</span>}
@@ -712,6 +687,18 @@ function App() {
         {currentTab === 'dashboard' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             
+            {/* 新增：全域超前部署預警橫幅 */}
+            {activeGlobalFutureOverload && intensity !== 'sprint' && (
+              <div style={{ backgroundColor: '#fee2e2', border: '2px solid #ef4444', padding: '16px 20px', borderRadius: '12px' }}>
+                <h3 style={{ margin: 0, color: '#b91c1c', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  ⚠️ 系統超前預警：計畫期間內出現爆量風險！
+                </h3>
+                <p style={{ margin: '8px 0 0 0', color: '#991b1b', fontSize: '14px', fontWeight: 'bold' }}>
+                  系統偵測到未來排程（預計於 <strong style={{ textDecoration: 'underline' }}>{activeGlobalFirstOverloadDate}</strong>）將發生產能溢出。請提早調整休息日或縮減計畫，避免當日負載過重。
+                </p>
+              </div>
+            )}
+
             <div style={{ 
               backgroundColor: (activeIsOverloaded && intensity !== 'sprint') ? '#fff1f2' : activeIsFrozen ? '#fff7ed' : (activeIsRest && activeRecs.length === 0) ? '#f8fafc' : '#f0fdf4', 
               border: (activeIsOverloaded && intensity !== 'sprint') ? '3px solid #ef4444' : activeIsFrozen ? '2px solid #fed7aa' : (activeIsRest && activeRecs.length === 0) ? '2px solid #cbd5e1' : '2px solid #bbf7d0', 
@@ -767,7 +754,6 @@ function App() {
 
             <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 500px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                
                 <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '12px', border: '2px solid #2563eb' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                     <h3 style={{ margin: 0, fontSize: '16px', color: '#1e3a8a', fontWeight: 'bold' }}>✍️ 研讀進度實質回報</h3>
@@ -790,7 +776,6 @@ function App() {
                         </span>
                       )}
                     </div>
-
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>🧠 評估本次研讀吸收品質：</label>
                       <div style={{ display: 'flex', gap: '8px' }}>
@@ -799,12 +784,10 @@ function App() {
                         <button type="button" onClick={() => setReportQuality('distracted')} style={{ flex: 1, padding: '8px', fontSize: '13px', borderRadius: '8px', cursor: 'pointer', border: reportQuality === 'distracted' ? '2px solid #991b1b' : '1px solid #cbd5e1', backgroundColor: reportQuality === 'distracted' ? '#fee2e2' : '#fff', color: '#7f1d1d', fontWeight: 'bold' }}>💤 精神渙散</button>
                       </div>
                     </div>
-
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                       <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>📝 每日小記 / 補強提醒備忘錄（可留空）：</label>
                       <input type="text" placeholder="例如：後半段化學式不懂，明天需回頭複習" value={reportNote} onChange={e => setReportNote(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '13px' }} />
                     </div>
-
                     <button type="submit" style={{ backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', marginTop: '4px' }}>確認送出實質進度</button>
                   </form>
                 </div>
@@ -860,7 +843,10 @@ function App() {
                           const totalComp = b.completedUnits || 0;
                           const globalMaxUnits = b.totalUnits * (b.targetRounds || 1);
                           const globalPct = Math.min(100, Math.round((totalComp / globalMaxUnits) * 100));
-                          const remainWorkDays = getRemainingWorkDays(formatDateStr(new Date()), b.deadline);
+                          
+                          // 修正：純日曆剩餘天數計算
+                          const calendarRemainDays = getCalendarDaysRemaining(b.deadline);
+
                           return (
                             <div key={b.id} style={{ backgroundColor: '#fff', padding: '14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -875,7 +861,7 @@ function App() {
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#475569', marginTop: '6px', fontWeight: 'bold' }}>
                                 <span>📈 總進度：{totalComp} / {globalMaxUnits} ({globalPct}%)</span>
-                                <span style={{ color: remainWorkDays <= 5 ? '#dc2626' : '#2563eb' }}>⏳ 剩餘天數：{remainWorkDays} 天</span>
+                                <span style={{ color: calendarRemainDays <= 5 ? '#dc2626' : '#2563eb' }}>⏳ 剩餘天數：{calendarRemainDays} 天</span>
                               </div>
                             </div>
                           );
