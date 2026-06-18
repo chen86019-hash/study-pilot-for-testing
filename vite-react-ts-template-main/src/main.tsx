@@ -48,6 +48,10 @@ interface FreezeRange {
   end: string;
 }
 
+// 【V29 核心修正】引入版本控制控制閘，強制沖刷干擾新演算法的舊快取變數
+const CURRENT_VERSION = 'v29_stable';
+const KEY_VERSION = 'studypilot_version';
+
 const KEY_INTENSITY = 'studypilot_intensity';
 const KEY_PLANS = 'studypilot_plans';
 const KEY_LOGS = 'studypilot_logs';
@@ -72,7 +76,6 @@ const bridgeLoad = (key: string, oldV11Key: string, defaultValue: any) => {
   }
 };
 
-// 【修正點 3 & 4】優化各模式的速限標準，大幅拉高「頁數」教材的觸發門檻，避免頁數容易爆炸、章節卻不會爆的問題
 const INTENSITY_CONFIGS = {
   easy: {
     label: '☕ 輕鬆念 (以 65% 速度慢跑，適合調整狀態)',
@@ -80,11 +83,11 @@ const INTENSITY_CONFIGS = {
   },
   normal: {
     label: '⚖️ 正常念 (100% 基準配速，觸發大腦斷路器安全機制上限)',
-    ceilings: { pages: 60, chapters: 3 } // 調高頁數上限至 60 頁，讓頁數與章節的負荷感對等
+    ceilings: { pages: 60, chapters: 3 } 
   },
   sprint: {
     label: '🔥 衝刺念 (全速全力開航！全面解除大腦防護上限，不觸發任何爆量攔截)',
-    ceilings: { pages: 9999, chapters: 999 } // 衝刺模式下實質解除限制
+    ceilings: { pages: 9999, chapters: 999 } 
   }
 };
 
@@ -122,7 +125,6 @@ function App() {
 
   const [tmpFreezeStart, setTmpFreezeStart] = useState<string>('');
   const [tmpFreezeEnd, setTmpFreezeEnd] = useState<string>('');
-
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [currentYear, setCurrentYear] = useState<number>(() => new Date().getFullYear());
   const [currentMonth, setCurrentMonth] = useState<number>(() => new Date().getMonth());
@@ -132,7 +134,6 @@ function App() {
   const [newPlanName, setNewPlanName] = useState('');
   const [newPlanStartDate, setNewPlanStartDate] = useState(todayFormatted); 
   const [newPlanDeadline, setNewPlanDeadline] = useState('');
-  
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [newBookTitle, setNewBookTitle] = useState('');
   const [newBookUnitType, setNewBookUnitType] = useState<'pages' | 'chapters'>('pages');
@@ -140,17 +141,27 @@ function App() {
   const [newBookStartDate, setNewBookStartDate] = useState(todayFormatted); 
   const [newBookDeadline, setNewBookDeadline] = useState(''); 
   const [newBookRounds, setNewBookRounds] = useState<number | ''>(1); 
-  
   const [reportBookId, setReportBookId] = useState('');
   const [reportUnits, setReportUnits] = useState<string>(''); 
   const [reportQuality, setReportQuality] = useState<ProgressQuality>('solid');
   const [reportNote, setReportNote] = useState<string>('');
-
   const [showReplanModal, setShowReplanModal] = useState<boolean>(false);
   const [modalReplanDate, setModalReplanDate] = useState<string>(todayFormatted);
-
   const [dateOptions, setDateOptions] = useState<string[]>([]);
   
+  // 【V29 強制修正機制】首次載入時，如果發現版本不對，立刻對齊切點、清除過期移編阻礙
+  useEffect(() => {
+    const savedVer = localStorage.getItem(KEY_VERSION);
+    if (savedVer !== CURRENT_VERSION) {
+      localStorage.setItem(KEY_VERSION, CURRENT_VERSION);
+      localStorage.setItem(KEY_REPLAN_DATE, todayFormatted);
+      localStorage.setItem(KEY_STRATEGYC, JSON.stringify([]));
+      setReplanStartDate(todayFormatted);
+      setStrategyCLogs([]);
+      console.log("🚀 StudyPilot V29 核心演算法快取成功完成強制校準同步！");
+    }
+  }, [todayFormatted]);
+
   const getSelectedBookUnitLabel = () => {
     if (!reportBookId) return '';
     const allBooks = plans.flatMap(p => p.books || []);
@@ -257,11 +268,12 @@ function App() {
 
   const handleExecuteReplan = () => {
     setReplanStartDate(modalReplanDate);
+    setStrategyCLogs([]); // 清空過往積壓的移編紀錄，重新配速
     setShowReplanModal(false);
     alert(`🎯 配速校準成功！已將 ${modalReplanDate} 設定為全新配速重新計算基準日。`);
   };
 
-  // 【核心演算法重構點 1 & 2】封裝為完全一致的共享配速引擎，確保主頁面與日曆極致同步
+  // 共享配速演算大腦核心
   const getDayPlanDetails = (gridDate: Date) => {
     const target = new Date(gridDate.getFullYear(), gridDate.getMonth(), gridDate.getDate(), 0, 0, 0, 0);
     const dateStr = formatDateStr(target);
@@ -311,8 +323,6 @@ function App() {
 
     let scanDate = new Date(earliestStart.getFullYear(), earliestStart.getMonth(), earliestStart.getDate(), 0, 0, 0, 0);
     let mainLoopGuard = 0;
-    
-    // 清除臨時的模擬移編紀錄，由引擎在循環中全新推導
     let dynamicStrategyCLogs: StrategyCLog[] = [];
 
     while (scanDate <= absoluteLatestDeadline) {
@@ -393,7 +403,6 @@ function App() {
           let isDayBookOverloaded = false;
           let oriUnitsBeforeTruncate = finalDayUnits;
 
-          // 【修正點 2 & 4】如果是衝刺模式，一律不截斷、不警告。其餘模式下依照全新寬容度門檻管制
           if (activeCeilingMode !== 'sprint') {
             if (b.unitType === 'pages' && finalDayUnits > ceiling.pages) {
               isDayBookOverloaded = true; finalDayUnits = ceiling.pages;
@@ -471,7 +480,6 @@ function App() {
         });
       });
 
-      // 未來爆量探測
       if (scanDateStr > dateStr && isOverloaded === false && intensity !== 'sprint') {
         plans.forEach(p => {
           if (!p.books) return;
@@ -573,9 +581,7 @@ function App() {
       return { ...p, books: (p.books || []).map(b => b.id === reportBookId ? { ...b, completedUnits: (b.completedUnits || 0) + Number(reportUnits) } : b) };
     }));
     
-    setReportUnits('');
-    setReportQuality('solid');
-    setReportNote('');
+    setReportUnits(''); setReportQuality('solid'); setReportNote('');
   };
 
   const handleDeleteLog = (logId: string, bookId: string, units: number) => {
@@ -631,7 +637,7 @@ function App() {
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '20px' }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot 每日備考領航員</h1>
+              <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot 每日備考領航員 (V29)</h1>
               <div style={{ fontSize: '14px', color: '#64748b', marginTop: '4px', fontWeight: 'bold' }}>
                 📅 今日時間座標：<span style={{ color: '#2563eb' }}>{todayFormatted}</span>
                 {replanStartDate !== todayFormatted && <span style={{ marginLeft: '12px', color: '#b45309' }}>🔄 已於 {replanStartDate} 執行重新安排</span>}
@@ -661,7 +667,6 @@ function App() {
             </div>
           </div>
 
-          {/* 【修正點 3】精準標註說明動態看板：在模式切換正下方提供即時說明 */}
           <div style={{ backgroundColor: '#f8fafc', padding: '10px 16px', borderRadius: '8px', borderLeft: '4px solid #6366f1', fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>
             💡 當前配速模式說明：<span style={{ color: intensity === 'sprint' ? '#dc2626' : intensity === 'normal' ? '#166534' : '#2563eb' }}>{INTENSITY_CONFIGS[intensity].label}</span>
           </div>
@@ -708,16 +713,15 @@ function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             
             <div style={{ 
-              backgroundColor: activeIsOverloaded ? '#fff1f2' : activeIsFrozen ? '#fff7ed' : (activeIsRest && activeRecs.length === 0) ? '#f8fafc' : '#f0fdf4', 
-              border: activeIsOverloaded ? '3px solid #ef4444' : activeIsFrozen ? '2px solid #fed7aa' : (activeIsRest && activeRecs.length === 0) ? '2px solid #cbd5e1' : '2px solid #bbf7d0', 
+              backgroundColor: (activeIsOverloaded && intensity !== 'sprint') ? '#fff1f2' : activeIsFrozen ? '#fff7ed' : (activeIsRest && activeRecs.length === 0) ? '#f8fafc' : '#f0fdf4', 
+              border: (activeIsOverloaded && intensity !== 'sprint') ? '3px solid #ef4444' : activeIsFrozen ? '2px solid #fed7aa' : (activeIsRest && activeRecs.length === 0) ? '2px solid #cbd5e1' : '2px solid #bbf7d0', 
               padding: '24px', 
               borderRadius: '14px' 
             }}>
-              <h3 style={{ margin: 0, color: activeIsOverloaded ? '#991b1b' : activeIsFrozen ? '#c2410c' : (activeIsRest && activeRecs.length === 0) ? '#475569' : '#166534', fontSize: '18px', fontWeight: '800' }}>
+              <h3 style={{ margin: 0, color: (activeIsOverloaded && intensity !== 'sprint') ? '#991b1b' : activeIsFrozen ? '#c2410c' : (activeIsRest && activeRecs.length === 0) ? '#475569' : '#166534', fontSize: '18px', fontWeight: '800' }}>
                 🚀 航線作戰進度分配建議 (觀測日期: <span style={{ color: '#2563eb' }}>{reportDateStr}</span>)
               </h3>
 
-              {/* 【修正點 1 & 2】主頁面警報：全面連動引擎狀態，衝刺模式絕不誤報 */}
               {activeIsOverloaded && intensity !== 'sprint' && (
                 <div style={{ marginTop: '12px', padding: '14px 18px', backgroundColor: '#fee2e2', border: '2px solid #fca5a5', borderRadius: '10px', color: '#9f1239', fontSize: '14px', fontWeight: 'bold', lineHeight: '1.6' }}>
                   🛑 {activeOverloadReason}
@@ -810,11 +814,11 @@ function App() {
                   <form onSubmit={handleCreatePlan} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <input type="text" placeholder="例如：食品檢驗分析乙級" value={newPlanName} onChange={e => setNewPlanName(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 'bold'>📅 起始日：</label>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>📅 起始日：</label>
                       <input type="date" value={newPlanStartDate} onChange={e => setNewPlanStartDate(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 'bold'>🏁 截止日：</label>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>🏁 截止日：</label>
                       <input type="date" value={newPlanDeadline} onChange={e => setNewPlanDeadline(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     </div>
                     <button type="submit" style={{ backgroundColor: '#0f172a', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', fontSize: '14px' }}>確認建立科目框架</button>
@@ -937,8 +941,6 @@ function App() {
                 const { isRest, isFrozenDay, recommendations = [], dateStr, dayLogs = [], isOverloaded } = getDayPlanDetails(grid.date);
                 const isToday = todayFormatted === dateStr;
                 const roughLogsWithNotes = dayLogs.filter(l => (l.quality === 'rough' || l.quality === 'distracted') && l.note);
-
-                // 【修正點 1 & 2】行事曆爆量警報：全面與引擎同步，衝刺模式下絕對不亮起過載紅色警報
                 const shouldShowGridOverload = isOverloaded && intensity !== 'sprint';
 
                 return (
@@ -985,7 +987,6 @@ function App() {
                             }}
                           >
                             <input type="checkbox" checked={isTaskChecked} onChange={() => toggleTaskCheck(dateStr, r.id)} style={{ transform: 'scale(0.8)', cursor: 'pointer', margin: '1px 0 0 0' }} />
-                            {/* 【修正點 5】行事曆格子不再只顯示沒頭沒尾的量化數字，而是完整顯示「實質頁數/章節編碼」定位點 */}
                             <span style={{ flex: 1 }} title={`${r.title}: ${r.rangeText}`}>
                               {r.title}: {r.rangeText}
                             </span>
@@ -1005,7 +1006,7 @@ function App() {
       {showReplanModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }}>
           <div style={{ backgroundColor: 'white', padding: '28px', borderRadius: '16px', maxWidth: '500px', width: '90%', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
-            <h3 style={{ margin: '0 0 12px 0', color: '#dc2626', fontSize: '18px', fontWeight: 'bold' }}>⚠️ 重新校准備考航線確認</h3>
+            <h3 style={{ margin: '0 0 12px 0', color: '#dc2626', fontSize: '18px', fontWeight: 'bold' }}>⚠️ 重新校準備考航線確認</h3>
             <p style={{ fontSize: '14px', color: '#475569', lineHeight: '1.6', margin: '0 0 16px 0' }}>
               請確認今天以前的過往研讀量都已輸入完畢。
               系統即將以指定日期為切點，將剩餘未完成的總教材量重新均分給未來所有的備考有效天數。
