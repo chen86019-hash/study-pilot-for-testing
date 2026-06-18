@@ -48,7 +48,6 @@ interface FreezeRange {
   end: string;
 }
 
-// 🎛️ 永久固定儲存金鑰（不滅金鑰）
 const KEY_INTENSITY = 'studypilot_intensity';
 const KEY_PLANS = 'studypilot_plans';
 const KEY_LOGS = 'studypilot_logs';
@@ -56,7 +55,6 @@ const KEY_REST = 'studypilot_rest';
 const KEY_CHECKED = 'studypilot_checked_tasks';
 const KEY_STRATEGYC = 'studypilot_strategy_c';
 const KEY_FREEZE = 'studypilot_freeze_ranges';
-// 🆕 V25 新增：動態重規劃基準日金鑰
 const KEY_REPLAN_DATE = 'studypilot_replan_start_date';
 
 const bridgeLoad = (key: string, oldV11Key: string, defaultValue: any) => {
@@ -87,6 +85,15 @@ const formatDateStr = (date: Date) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+// 🗺️ 安全解析本地時區 YYYY-MM-DD 的救星函數
+const parseLocalDate = (dateStr: string) => {
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 0, 0, 0, 0);
+  }
+  return new Date(dateStr);
+};
+
 function App() {
   const todayFormatted = formatDateStr(new Date());
 
@@ -100,8 +107,6 @@ function App() {
   const [checkedTasks, setCheckedTasks] = useState<{ [key: string]: boolean }>(() => bridgeLoad(KEY_CHECKED, 'pilot_checked_tasks_v11', {}));
   const [strategyCLogs, setStrategyCLogs] = useState<StrategyCLog[]>(() => bridgeLoad(KEY_STRATEGYC, 'pilot_strategy_c_v11', []));
   const [freezeRanges, setFreezeRanges] = useState<FreezeRange[]>(() => bridgeLoad(KEY_FREEZE, 'pilot_freeze_ranges_v11', []));
-  
-  // 🆕 V25 新增：重新規劃基準日狀態（預設為今天）
   const [replanStartDate, setReplanStartDate] = useState<string>(() => {
     return localStorage.getItem(KEY_REPLAN_DATE) || todayFormatted;
   });
@@ -132,7 +137,6 @@ function App() {
   const [reportQuality, setReportQuality] = useState<ProgressQuality>('solid');
   const [reportNote, setReportNote] = useState<string>('');
 
-  // 🆕 V25 新增：控制一鍵重新規劃防呆彈窗
   const [showReplanModal, setShowReplanModal] = useState<boolean>(false);
   const [modalReplanDate, setModalReplanDate] = useState<string>(todayFormatted);
 
@@ -228,8 +232,8 @@ function App() {
 
   const getRemainingWorkDays = (startStr: string, endStr: string) => {
     let count = 0;
-    let curr = new Date(startStr); curr.setHours(0,0,0,0);
-    const end = new Date(endStr); end.setHours(0,0,0,0);
+    let curr = parseLocalDate(startStr);
+    const end = parseLocalDate(endStr);
     let guard = 0;
     while (curr <= end) {
       guard++; if (guard > 2000) break; 
@@ -242,7 +246,6 @@ function App() {
     return count;
   };
 
-  // 🆕 V25 新增：一鍵重新規劃點擊確認處理
   const handleExecuteReplan = () => {
     setReplanStartDate(modalReplanDate);
     setShowReplanModal(false);
@@ -250,7 +253,7 @@ function App() {
   };
 
   const getDayPlanDetails = (gridDate: Date) => {
-    const target = new Date(gridDate); target.setHours(0, 0, 0, 0);
+    const target = new Date(gridDate.getFullYear(), gridDate.getMonth(), gridDate.getDate(), 0, 0, 0, 0);
     const dateStr = formatDateStr(target);
     const today = new Date(); today.setHours(0,0,0,0);
     const todayStr = formatDateStr(today);
@@ -280,24 +283,23 @@ function App() {
       }
     });
 
-    let earliestStart = new Date(today);
-    let absoluteLatestDeadline = new Date(today);
+    let earliestStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 5);
+    let absoluteLatestDeadline = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 45);
+    
     plans.forEach(p => {
-      const pStart = new Date(p.startDate || formatDateStr(today));
+      const pStart = parseLocalDate(p.startDate || todayStr);
       if (pStart < earliestStart) earliestStart = pStart;
       if (p.books) {
         p.books.forEach(b => {
-          const bStart = new Date(b.startDate || formatDateStr(today));
-          const bEnd = new Date(b.deadline);
+          const bStart = parseLocalDate(b.startDate || todayStr);
+          const bEnd = parseLocalDate(b.deadline);
           if (bStart < earliestStart) earliestStart = bStart;
           if (bEnd > absoluteLatestDeadline) absoluteLatestDeadline = bEnd;
         });
       }
     });
-    earliestStart.setDate(earliestStart.getDate() - 5);
-    absoluteLatestDeadline.setDate(absoluteLatestDeadline.getDate() + 45);
 
-    let scanDate = new Date(earliestStart);
+    let scanDate = new Date(earliestStart.getFullYear(), earliestStart.getMonth(), earliestStart.getDate(), 0, 0, 0, 0);
     let mainLoopGuard = 0;
     
     while (scanDate <= absoluteLatestDeadline) {
@@ -314,8 +316,8 @@ function App() {
       plans.forEach(p => {
         if (!p.books) return;
         p.books.forEach(b => {
-          const bStart = new Date(b.startDate); bStart.setHours(0,0,0,0);
-          const bDeadline = new Date(b.deadline); bDeadline.setHours(0,0,0,0);
+          const bStart = parseLocalDate(b.startDate);
+          const bDeadline = parseLocalDate(b.deadline);
           
           if (scanDate < bStart || scanDate > bDeadline) return;
 
@@ -326,10 +328,8 @@ function App() {
           let finalDayUnits = 0;
           let displayDetailStr = '';
 
-          // 🆕 V25 重規劃算法介入點：如果掃描日大於或等於「重規劃基準日」，則重新以剩餘量配速
           if (!scanIsRest) {
             let calculationStartDateStr = scanDateStr;
-            // 如果當前掃描日還沒到重規劃日，但該教材在重規劃日後需要重新分配
             if (scanDateStr >= replanStartDate) {
               calculationStartDateStr = scanDateStr;
             }
@@ -343,7 +343,7 @@ function App() {
               if (rawRec <= 0) rawRec = 0;
 
               let calculatedRec = rawRec;
-              const activeMode = scanDate < today ? 'normal' : intensity;
+              const activeMode = scanDateStr < todayStr ? 'normal' : intensity;
 
               if (activeMode === 'easy') calculatedRec = rawRec * 0.65;
               else if (activeMode === 'sprint') calculatedRec = rawRec * 1.40;
@@ -366,7 +366,7 @@ function App() {
             }
           }
 
-          if (scanDate >= today && advanceSurplusPool[b.id] > 0 && finalDayUnits > 0) {
+          if (scanDateStr >= todayStr && advanceSurplusPool[b.id] > 0 && finalDayUnits > 0) {
             if (advanceSurplusPool[b.id] >= finalDayUnits) {
               advanceSurplusPool[b.id] -= finalDayUnits; finalDayUnits = 0;
             } else {
@@ -377,7 +377,7 @@ function App() {
           const incomingCValue = strategyCLogs.filter(cl => cl.bookId === b.id && cl.targetDate === scanDateStr).reduce((sum, cl) => sum + cl.units, 0);
           if (incomingCValue > 0) finalDayUnits += incomingCValue;
 
-          const activeCeilingMode = scanDate < today ? 'normal' : intensity;
+          const activeCeilingMode = scanDateStr < todayStr ? 'normal' : intensity;
           const ceiling = INTENSITY_CEILINGS[activeCeilingMode];
           let maxAllowed = b.unitType === 'pages' ? ceiling.pages : ceiling.chapters;
           let isDayTruncated = false;
@@ -385,13 +385,15 @@ function App() {
 
           const checkCompareValue = b.unitType === 'pages' ? finalDayUnits : Math.ceil(finalDayUnits);
           if (checkCompareValue > maxAllowed && activeCeilingMode !== 'sprint') {
-            excessUnits = checkCompareValue - maxAllowed; finalDayUnits = maxAllowed; isDayTruncated = true; displayDetailStr = ''; 
+            excessUnits = checkCompareValue - maxAllowed; 
+            finalDayUnits = maxAllowed; 
+            isDayTruncated = true; 
+            displayDetailStr = ''; 
           }
 
           const outboundCValue = strategyCLogs.filter(cl => cl.bookId === b.id && cl.sourceDate === scanDateStr).reduce((sum, cl) => sum + cl.units, 0);
           if (outboundCValue > 0) { finalDayUnits = Math.max(0, finalDayUnits - outboundCValue); isDayTruncated = false; }
 
-          // 基礎回報覆蓋
           if (scanDate <= today) {
             const matchedLogs = dailyLogs.filter(l => l.date === scanDateStr && l.bookId === b.id);
             if (matchedLogs.length > 0) {
@@ -413,7 +415,6 @@ function App() {
           }
 
           if (scanDateStr === dateStr) {
-            // 🆕 V25 調整：即使是休息日，只要有建議量、或者當天有回報進度，皆予以渲染顯示（解鎖休息日勾選）
             if (!scanIsRest || finalDayUnits > 0 || dayLogs.length > 0) {
               let rangeText = '';
               if (b.unitType === 'pages') {
@@ -423,7 +424,7 @@ function App() {
                 else rangeText = startUnit === endUnit ? `第 ${startUnit} 章` : `第 ${startUnit} ～ ${endUnit} 章`;
               }
               if (outboundCValue > 0 && finalDayUnits <= 0) rangeText = '今日超載進度已移編至未來';
-              if (finalDayUnits === 0 && scanDate >= today) rangeText = '🎉 昨日超前研讀，今日配額已被完美抵銷！';
+              if (finalDayUnits === 0 && scanDateStr >= todayStr) rangeText = '🎉 昨日超前研讀，今日配額已被完美抵銷！';
 
               currentDayRecsList.push({
                 id: b.id, title: b.title, planName: p.name, color: p.color,
@@ -439,10 +440,13 @@ function App() {
       });
 
       if (scanDateStr === dateStr) {
-        finalRecs = currentDayRecsList; truncatedBooks = scanDayTruncatedBooks;
-        if (scanDayTruncatedBooks.length > 0) isOverloaded = true;
+        finalRecs = currentDayRecsList; 
+        truncatedBooks = scanDayTruncatedBooks;
+        if (scanDayTruncatedBooks.length > 0) {
+          isOverloaded = true; 
+        }
       }
-      if (scanDate > target && scanDayTruncatedBooks.length > 0 && !hasFutureOverload) {
+      if (scanDateStr > dateStr && scanDayTruncatedBooks.length > 0 && !hasFutureOverload) {
         hasFutureOverload = true; firstOverloadDateStr = scanDateStr;
       }
       scanDate.setDate(scanDate.getDate() + 1);
@@ -450,7 +454,7 @@ function App() {
 
     return {
       isRest, isFrozenDay, dayLogs, recommendations: finalRecs, dateStr,
-      isOverloaded, hasFutureOverload, firstOverloadDateStr, overloadReason: '🧠【大腦負荷管理攔截】量能觸頂。', truncatedBooks, isExtremeRisk
+      isOverloaded, hasFutureOverload, firstOverloadDateStr, overloadReason: '🧠【大腦負荷管理攔截】量能觸頂。系統已自動啟動斷路機制，將超量進度平攤移編至未來航線。', truncatedBooks, isExtremeRisk
     };
   };
 
@@ -482,7 +486,7 @@ function App() {
     e.preventDefault();
     if (!selectedPlanId || !newBookTitle.trim() || !newBookTotal || !newBookStartDate || !newBookDeadline) return;
     if (!checkDateNotPast(newBookStartDate, "教材研讀起始日")) return;
-    if (!checkDateNotPast(newBookDeadline, "教材研edit截止日")) return;
+    if (!checkDateNotPast(newBookDeadline, "教材研修截止日")) return;
     if (newBookDeadline < newBookStartDate) { alert("⚠️ 教材截止日不能早於起始日！"); return; }
 
     setPlans(prev => prev.map(p => {
@@ -566,10 +570,13 @@ function App() {
     }
   };
 
+  // 🧩 透過本地 Parse 來抓取目標日期的物件，徹底消除時區問題
+  const parsedTargetDate = parseLocalDate(reportDateStr);
   const { 
     isRest: activeIsRest, isFrozenDay: activeIsFrozen, recommendations: activeRecs = [], 
-    isOverloaded: activeIsOverloaded, dayLogs: activeDayLogs = []
-  } = getDayPlanDetails(new Date(reportDateStr));
+    isOverloaded: activeIsOverloaded, dayLogs: activeDayLogs = [], overloadReason: activeOverloadReason, 
+    truncatedBooks: activeTruncatedBooks = []
+  } = getDayPlanDetails(parsedTargetDate);
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: 'system-ui, sans-serif', color: '#0f172a', fontSize: '16px' }}>
@@ -579,7 +586,6 @@ function App() {
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div>
-              {/* 🆕 V25 正名：移除私底下溝通的版次，優雅呈現 */}
               <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>🎯 StudyPilot 每日備考領航員</h1>
               <div style={{ fontSize: '14px', color: '#64748b', marginTop: '4px', fontWeight: 'bold' }}>
                 📅 今日時間座標：<span style={{ color: '#2563eb' }}>{todayFormatted}</span>
@@ -588,7 +594,6 @@ function App() {
             </div>
 
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-              {/* 🆕 V25 新增：一鍵重新規劃按鈕 */}
               <button 
                 onClick={() => { setModalReplanDate(todayFormatted); setShowReplanModal(true); }} 
                 style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', boxShadow: '0 2px 4px rgba(220,38,38,0.2)' }}
@@ -611,7 +616,7 @@ function App() {
 
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 400px', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#475569' }}>🔒 每週固定隔離休息日（仍開放自由勾選與補小記）：</span>
+              <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#475569' }}>🔒 每週固定隔離休息日：</span>
               {['日', '一', '二', '三', '四', '五', '六'].map((name, index) => {
                 const isRest = weeklyRestDays.includes(index);
                 return (
@@ -649,10 +654,32 @@ function App() {
       <main style={{ maxWidth: '1240px', margin: '0 auto', padding: '24px 20px' }}>
         {currentTab === 'dashboard' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            <div style={{ backgroundColor: activeIsOverloaded ? '#fff1f2' : activeIsFrozen ? '#fff7ed' : (activeIsRest && activeRecs.length === 0) ? '#f8fafc' : '#f0fdf4', border: activeIsOverloaded ? '2px solid #ef4444' : activeIsFrozen ? '2px solid #fed7aa' : (activeIsRest && activeRecs.length === 0) ? '2px solid #cbd5e1' : '2px solid #bbf7d0', padding: '24px', borderRadius: '14px' }}>
+            
+            {/* 🛑 這裡就是你檢查的關鍵：只要 activeIsOverloaded 真實為 true，會瞬間跳出滿版危險深紅框與文字 */}
+            <div style={{ 
+              backgroundColor: activeIsOverloaded ? '#fff1f2' : activeIsFrozen ? '#fff7ed' : (activeIsRest && activeRecs.length === 0) ? '#f8fafc' : '#f0fdf4', 
+              border: activeIsOverloaded ? '3px solid #ef4444' : activeIsFrozen ? '2px solid #fed7aa' : (activeIsRest && activeRecs.length === 0) ? '2px solid #cbd5e1' : '2px solid #bbf7d0', 
+              padding: '24px', 
+              borderRadius: '14px' 
+            }}>
               <h3 style={{ margin: 0, color: activeIsOverloaded ? '#991b1b' : activeIsFrozen ? '#c2410c' : (activeIsRest && activeRecs.length === 0) ? '#475569' : '#166534', fontSize: '18px', fontWeight: '800' }}>
                 🚀 航線作戰進度分配建議 (觀測日期: <span style={{ color: '#2563eb' }}>{reportDateStr}</span>)
               </h3>
+
+              {activeIsOverloaded && (
+                <div style={{ marginTop: '12px', padding: '12px 16px', backgroundColor: '#fecdd3', border: '1px solid #fda4af', borderRadius: '8px', color: '#9f1239', fontSize: '14px', fontWeight: 'bold', lineHeight: '1.5' }}>
+                  ⚠️ {activeOverloadReason}
+                  <div style={{ marginTop: '6px', fontSize: '13px', fontWeight: 'normal' }}>
+                    <strong>🔍 今日遭到攔截的教材：</strong>
+                    {activeTruncatedBooks.map((tb: any, tbx: number) => (
+                      <span key={tbx} style={{ marginLeft: '8px', backgroundColor: '#ffe4e6', padding: '2px 6px', borderRadius: '4px', color: '#be123c', fontWeight: 'bold' }}>
+                        {tb.title} (超量量能： {tb.excess} {tb.unitType === 'pages' ? '頁' : '章'}已完美安全移編)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '16px' }}>
                 {activeIsFrozen ? (
                   <div style={{ padding: '12px 0', fontWeight: 'bold', color: '#ea580c', fontSize: '15px' }}>⏳ 系統提示：目前觀測日正處於已登記的無法閱讀日中。</div>
@@ -732,11 +759,11 @@ function App() {
                   <form onSubmit={handleCreatePlan} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <input type="text" placeholder="例如：食品檢驗分析乙級" value={newPlanName} onChange={e => setNewPlanName(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>📅 起始日：</label>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold'>📅 起始日：</label>
                       <input type="date" value={newPlanStartDate} onChange={e => setNewPlanStartDate(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>🏁 截止日：</label>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold'>🏁 截止日：</label>
                       <input type="date" value={newPlanDeadline} onChange={e => setNewPlanDeadline(e.target.value)} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} required />
                     </div>
                     <button type="submit" style={{ backgroundColor: '#0f172a', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', fontSize: '14px' }}>確認建立科目框架</button>
@@ -857,25 +884,31 @@ function App() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(100px, 1fr))', minWidth: '700px', gap: '8px' }}>
               {getMonthGrid().map((grid, idx) => {
-                const { isRest, isFrozenDay, recommendations = [], dateStr, dayLogs = [] } = getDayPlanDetails(grid.date);
+                const { isRest, isFrozenDay, recommendations = [], dateStr, dayLogs = [], isOverloaded } = getDayPlanDetails(grid.date);
                 const isToday = todayFormatted === dateStr;
                 const roughLogsWithNotes = dayLogs.filter(l => (l.quality === 'rough' || l.quality === 'distracted') && l.note);
 
                 return (
                   <div
                     key={idx}
-                    onClick={() => setActiveDialog({ dateStr, isRest, isFrozenDay, recommendations, dayLogs })}
+                    onClick={() => setActiveDialog({ dateStr, isRest, isFrozenDay, recommendations, dayLogs, isOverloaded })}
                     style={{
-                      border: isToday ? '3px solid #2563eb' : '1px solid #cbd5e1',
+                      border: isToday ? '3px solid #2563eb' : isOverloaded ? '2px solid #ef4444' : '1px solid #cbd5e1',
                       borderRadius: '10px', padding: '6px', height: '160px',
-                      backgroundColor: isFrozenDay ? '#fff7ed' : isRest ? '#f1f5f9' : grid.isCurrent ? '#fff' : '#f8fafc',
+                      backgroundColor: isOverloaded ? '#fff1f2' : isFrozenDay ? '#fff7ed' : isRest ? '#f1f5f9' : grid.isCurrent ? '#fff' : '#f8fafc',
                       opacity: grid.isCurrent ? 1 : 0.4, cursor: 'pointer',
                       display: 'flex', flexDirection: 'column', boxSizing: 'border-box', minWidth: '0'
                     }}
                   >
                     <div style={{ fontSize: '12px', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <span style={{ color: isToday ? '#2563eb' : '#1e293b', fontWeight: '900' }}>{grid.date.getDate()}</span>
-                      {isFrozenDay ? <span style={{ color: '#c2410c', fontSize: '10px' }}>⏳假</span> : isRest ? <span style={{ color: '#94a3b8', fontSize: '10px' }}>🔒休</span> : null}
+                      <span style={{ color: isOverloaded ? '#b91c1c' : isToday ? '#2563eb' : '#1e293b', fontWeight: '900' }}>{grid.date.getDate()}</span>
+                      {isOverloaded ? (
+                        <span style={{ color: '#dc2626', fontSize: '11px', backgroundColor: '#fee2e2', padding: '1px 4px', borderRadius: '4px', fontWeight: '900' }}>⚠️ 爆量</span>
+                      ) : isFrozenDay ? (
+                        <span style={{ color: '#c2410c', fontSize: '10px' }}>⏳假</span>
+                      ) : isRest ? (
+                        <span style={{ color: '#94a3b8', fontSize: '10px' }}>🔒休</span>
+                      ) : null}
                     </div>
                     
                     <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '0' }}>
@@ -913,13 +946,13 @@ function App() {
         )}
       </main>
 
-      {/* 🆕 V25 一鍵重新規劃：兩階段防呆確認彈窗 */}
+      {/* 一鍵重新規劃彈窗 */}
       {showReplanModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }}>
           <div style={{ backgroundColor: 'white', padding: '28px', borderRadius: '16px', maxWidth: '500px', width: '90%', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
-            <h3 style={{ margin: '0 0 12px 0', color: '#dc2626', fontSize: '18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>⚠️ 重新校准備考航線確認</h3>
+            <h3 style={{ margin: '0 0 12px 0', color: '#dc2626', fontSize: '18px', fontWeight: 'bold' }}>⚠️ 重新校准備考航線確認</h3>
             <p style={{ fontSize: '14px', color: '#475569', lineHeight: '1.6', margin: '0 0 16px 0' }}>
-              請確認<strong>今天以前的過往研讀量都已輸入完畢</strong>。
+              請確認今天以前的過往研讀量都已輸入完畢。
               系統即將以指定日期為切點，將剩餘未完成的總教材量重新均分給未來所有的備考有效天數。
             </p>
             <div style={{ backgroundColor: '#f8fafc', padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
@@ -932,18 +965,8 @@ function App() {
               />
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button 
-                onClick={() => setShowReplanModal(false)} 
-                style={{ flex: 1, padding: '10px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
-                ❌ 取消，我去補登進度
-              </button>
-              <button 
-                onClick={handleExecuteReplan} 
-                style={{ flex: 1, padding: '10px', backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
-                🔄 確認一鍵重新規劃
-              </button>
+              <button onClick={() => setShowReplanModal(false)} style={{ flex: 1, padding: '10px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>❌ 取消</button>
+              <button onClick={handleExecuteReplan} style={{ flex: 1, padding: '10px', backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>🔄 確認一鍵重新規劃</button>
             </div>
           </div>
         </div>
@@ -955,6 +978,12 @@ function App() {
           <div style={{ backgroundColor: 'white', padding: '24px', borderRadius: '16px', maxWidth: '450px', width: '90%' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 16px 0', borderBottom: '2px solid #e2e8f0', paddingBottom: '10px', fontSize: '17px', fontWeight: 'bold' }}>📅 任務清單詳細觀測 ({activeDialog.dateStr})</h3>
             
+            {activeDialog.isOverloaded && (
+              <div style={{ marginBottom: '14px', padding: '10px 14px', backgroundColor: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '8px', color: '#b91c1c', fontSize: '13px', fontWeight: 'bold' }}>
+                ⚠️ 警報：大腦負荷機制偵測到此日量能超載，部分教材已被強制截斷移至後續日子。
+              </div>
+            )}
+
             {activeDialog.dayLogs && activeDialog.dayLogs.length > 0 && (
               <div style={{ marginBottom: '16px', backgroundColor: '#f8fafc', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', marginBottom: '6px' }}>📝 本日研讀品質實錄：</div>
